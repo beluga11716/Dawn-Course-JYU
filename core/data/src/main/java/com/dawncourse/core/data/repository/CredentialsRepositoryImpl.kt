@@ -8,6 +8,7 @@ import com.dawncourse.core.data.local.dao.TimetableProfileDao
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncCredentials
 import com.dawncourse.core.domain.model.SyncProviderType
+import com.dawncourse.core.domain.model.ZhengFangSession
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.google.gson.Gson
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -311,12 +312,13 @@ class CredentialsRepositoryImpl @Inject constructor(
         val username: String? = null,
         val secret: String? = null,
         val endpointUrl: String? = null,
+        val zhengFangSession: ZhengFangSession? = null,
     ) {
         fun toDomain(): SyncCredentials? {
             val parsedProvider = provider?.let { runCatching { SyncProviderType.valueOf(it) }.getOrNull() } ?: return null
             val parsedType = type?.let { runCatching { SyncCredentialType.valueOf(it) }.getOrNull() } ?: return null
             val parsedSecret = secret ?: return null
-            return SyncCredentials(parsedProvider, parsedType, username, parsedSecret, endpointUrl)
+            return SyncCredentials(parsedProvider, parsedType, username, parsedSecret, endpointUrl, zhengFangSession)
         }
 
         companion object {
@@ -326,6 +328,7 @@ class CredentialsRepositoryImpl @Inject constructor(
                 username = credentials.username,
                 secret = credentials.secret,
                 endpointUrl = credentials.endpointUrl,
+                zhengFangSession = credentials.zhengFangSession,
             )
         }
     }

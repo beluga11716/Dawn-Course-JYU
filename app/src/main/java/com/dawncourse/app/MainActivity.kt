@@ -50,6 +50,8 @@ import com.dawncourse.feature.timetable.CourseEditorScreen
 import com.dawncourse.feature.timetable.CourseEditorViewModel
 import com.dawncourse.feature.timetable.notification.ReminderScheduler
 import com.dawncourse.app.sync.WebDavAutoSyncScheduler
+import com.dawncourse.app.sync.ZhengFangAutoSyncScheduler
+import com.dawncourse.app.sync.ZhengFangSyncNotification
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -73,6 +75,13 @@ import com.dawncourse.core.domain.repository.OperationalDataReadiness
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private var zhengFangLoginRequest by mutableStateOf<Intent?>(null)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ZhengFangSyncNotification.ACTION_RELOGIN) zhengFangLoginRequest = intent
+    }
     private val isBenchmarkMode: Boolean by lazy { BenchmarkMode.isEnabled(applicationContext) }
 
     /** Activity 注入 Runtime 本身不会解析 AppDatabase。 */
@@ -95,6 +104,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        if (intent?.action == ZhengFangSyncNotification.ACTION_RELOGIN) zhengFangLoginRequest = intent
 
         // 开启 Edge-to-Edge 沉浸式模式
         //
@@ -212,6 +222,17 @@ class MainActivity : ComponentActivity() {
                 // - 三者都关闭时，仍先执行一次即时对账以清理旧 Alarm/通知，再取消周期保底任务
                 // - revision 同时包含当前学期和课程字段，编辑、导入、还原后都会触发即时收敛
                 if (!isBenchmarkMode) {
+                    LaunchedEffect(Unit) {
+                        viewModel.zhengFangAutoSyncTargets.collect { targets ->
+                            try {
+                                ZhengFangAutoSyncScheduler.schedule(applicationContext, targets)
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                android.util.Log.w("MainActivity", "schedule ZhengFang auto sync failed")
+                            }
+                        }
+                    }
                     LaunchedEffect(scheduleRevision) {
                         // LaunchedEffect 中的未捕获异常会冒泡到 Recomposer。此处仅下发后台
                         // 对账任务，WorkManager 或 OEM JobScheduler 的临时失败不应阻断主界面。
@@ -272,6 +293,19 @@ class MainActivity : ComponentActivity() {
                         // Navigation Host 导航主机
                         // 管理应用内的页面跳转
                         val navController = rememberNavController()
+                        LaunchedEffect(zhengFangLoginRequest) {
+                            val request = zhengFangLoginRequest ?: return@LaunchedEffect
+                            val profileId = request.getLongExtra("zfProfileId", -1)
+                            val semesterId = request.getLongExtra("zfSemesterId", -1)
+                            if (viewModel.openZhengFangLoginTarget(profileId, semesterId)) {
+                                // 丢弃旧页面的 ViewModel，重新捕获通知对应的 Profile 与学期。
+                                navController.popBackStack("zf_sync?login={login}", inclusive = true)
+                                navController.navigate("zf_sync?login=true")
+                            } else {
+                                Toast.makeText(this@MainActivity, "原课表或学期已不存在，请重新选择", Toast.LENGTH_SHORT).show()
+                            }
+                            if (zhengFangLoginRequest === request) zhengFangLoginRequest = null
+                        }
                         NavHost(
                             navController = navController,
                             startDestination = "timetable"
@@ -353,11 +387,15 @@ class MainActivity : ComponentActivity() {
                             
 
                             // 正方自动同步页面（复用同一实现）
-                            composable("zf_sync") {
+                            composable(
+                                "zf_sync?login={login}",
+                                arguments = listOf(navArgument("login") { type = NavType.BoolType; defaultValue = false }),
+                            ) { entry ->
                                 QidiAutoSyncScreen(
                                     onBackClick = { navController.popBackStack() },
                                     onFinish = { navController.popBackStack() },
-                                    provider = com.dawncourse.core.domain.model.SyncProviderType.ZF
+                                    provider = com.dawncourse.core.domain.model.SyncProviderType.ZF,
+                                    openLoginOnEntry = entry.arguments?.getBoolean("login") == true,
                                 )
                             }
                             

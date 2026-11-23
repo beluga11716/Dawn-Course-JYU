@@ -125,6 +125,12 @@ object DatabaseModule {
 @InstallIn(SingletonComponent::class)
 abstract class RepositoryModule {
 
+    @Binds
+    @Singleton
+    abstract fun bindZhengFangSyncRepository(
+        impl: com.dawncourse.core.data.repository.ZhengFangSyncRepositoryImpl,
+    ): com.dawncourse.core.domain.repository.ZhengFangSyncRepository
+
     /** 系统 Surface 的最终动作与 Profile 切换共用同一线性化门。 */
     @Binds
     @Singleton

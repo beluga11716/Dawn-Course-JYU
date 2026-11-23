@@ -53,6 +53,8 @@ class ProfileSelectionCoordinatorInstrumentedTest {
     private lateinit var activeStore: ActiveProfileSelectionStore
     private lateinit var failingDataStore: WriteThenThrowDataStore
     private lateinit var coordinator: ProfileSelectionCoordinator
+    private lateinit var credentials: FakeCredentialsRepository
+    private lateinit var mutationGate: OperationalDataMutationGate
 
     @Before
     fun setUp() {
@@ -65,6 +67,8 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         val delegate = PreferenceDataStoreFactory.create(scope = scope) { preferencesFile }
         failingDataStore = WriteThenThrowDataStore(delegate)
         activeStore = ActiveProfileSelectionStore(failingDataStore)
+        credentials = FakeCredentialsRepository()
+        mutationGate = OperationalDataMutationGate()
         coordinator = ProfileSelectionCoordinator(
             database = database,
             profileDao = database.timetableProfileDao(),
@@ -73,7 +77,8 @@ class ProfileSelectionCoordinatorInstrumentedTest {
             bindingDao = database.syncSourceBindingDao(),
             activeSelectionStore = activeStore,
             legacySemesterSelectionStore = SemesterSelectionStore(failingDataStore),
-            credentialsRepository = FakeCredentialsRepository(),
+            credentialsRepository = credentials,
+            mutationGate = mutationGate,
         )
     }
 
@@ -266,6 +271,69 @@ class ProfileSelectionCoordinatorInstrumentedTest {
     }
 
     @Test
+    fun savedSessionRotatesBindingAndKeepsPasswordWhileOldTaskCannotWrite() = runBlocking {
+        val first = insertProfile("A", 0)
+        val second = insertProfile("B", 1)
+        val semester = insertSemester(first)
+        database.timetableProfileDao().updateActiveSemesterId(first, semester)
+        activeStore.selectProfile(first)
+        val password = zfCredentials("student-a")
+        val initial = coordinator.saveCredentialsAndRebindIfActive(first, password)
+            as com.dawncourse.core.domain.repository.CredentialBindingMutationResult.Success
+        val oldBinding = requireNotNull(initial.sourceBindingId)
+        val session = password.copy(
+            type = com.dawncourse.core.domain.model.SyncCredentialType.SESSION,
+            zhengFangSession = com.dawncourse.core.domain.model.ZhengFangSession(
+                "webvpn-token=fake; route=fake; JSESSIONID=fake", "2026", "3", semester, "test", 1L,
+            ),
+        )
+
+        val result = coordinator.saveSessionForCapturedBinding(first, semester, oldBinding, password, session)
+            as com.dawncourse.core.domain.repository.CredentialBindingMutationResult.Success
+        val replacement = requireNotNull(result.sourceBindingId)
+        assertTrue(oldBinding != replacement)
+        assertEquals(session, credentials.getCredentials(first))
+        assertEquals(password.secret, credentials.getCredentials(first)?.secret)
+        assertFalse(coordinator.isCapturedBindingValid(first, semester, oldBinding))
+        coordinator.switch(second)
+        val courses = listOf(course(semester, 0L, false).toDomain())
+        assertFalse(coordinator.replaceCoursesForCapturedBinding(first, semester, SyncProviderType.ZF, oldBinding, courses))
+        assertTrue(coordinator.replaceCoursesForCapturedBinding(first, semester, SyncProviderType.ZF, replacement, courses))
+        assertEquals(second, activeStore.activeProfileId.first())
+        assertEquals(1, database.courseDao().getCoursesByProfileOnce(first).size)
+        assertTrue(database.courseDao().getCoursesByProfileOnce(second).isEmpty())
+    }
+
+    @Test
+    fun sessionCaptureRejectsChangedSelectionCredentialsAndOldBinding() = runBlocking {
+        val first = insertProfile("A", 0)
+        val second = insertProfile("B", 1)
+        val semester = insertSemester(first)
+        database.timetableProfileDao().updateActiveSemesterId(first, semester)
+        activeStore.selectProfile(first)
+        val original = zfCredentials("student-a")
+        val initial = coordinator.saveCredentialsAndRebindIfActive(first, original)
+            as com.dawncourse.core.domain.repository.CredentialBindingMutationResult.Success
+        val binding = requireNotNull(initial.sourceBindingId)
+        val rejected = com.dawncourse.core.domain.repository.CredentialBindingMutationResult.Rejected::class.java
+        coordinator.switch(second)
+        assertTrue(rejected.isInstance(coordinator.saveSessionForCapturedBinding(first, semester, binding, original, original)))
+        coordinator.switch(first)
+        val other = zfCredentials("student-b")
+        credentials.saveCredentials(first, other)
+        assertTrue(rejected.isInstance(coordinator.saveSessionForCapturedBinding(first, semester, binding, original, original)))
+        assertEquals(other, credentials.getCredentials(first))
+        coordinator.saveCredentialsAndRebindIfActive(first, other)
+        assertTrue(rejected.isInstance(coordinator.saveSessionForCapturedBinding(first, semester, binding, other, original)))
+        assertEquals(other, credentials.getCredentials(first))
+    }
+
+    private fun zfCredentials(username: String) = SyncCredentials(
+        SyncProviderType.ZF, com.dawncourse.core.domain.model.SyncCredentialType.PASSWORD,
+        username, "fake-password", com.dawncourse.core.domain.model.ZhengFangWebVpn.BASE_URL,
+    )
+
+    @Test
     fun activeActionGateRejectsOldProfileAfterSwitch() = runBlocking {
         val first = insertProfile("A", 0)
         val second = insertProfile("B", 1)
@@ -380,13 +448,17 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         bindingDao = database.syncSourceBindingDao(),
         activeSelectionStore = activeStore,
         profileSelectionCoordinator = coordinator,
+        mutationGate = mutationGate,
     )
 
     private class FakeCredentialsRepository : CredentialsRepository {
-        override suspend fun getCredentials(profileId: Long): SyncCredentials? = null
-        override suspend fun saveCredentials(profileId: Long, credentials: SyncCredentials) = Unit
-        override suspend fun copyCredentials(sourceProfileId: Long, targetProfileId: Long) = Unit
-        override suspend fun clearCredentials(profileId: Long) = Unit
+        private val saved = mutableMapOf<Long, SyncCredentials>()
+        override suspend fun getCredentials(profileId: Long): SyncCredentials? = saved[profileId]
+        override suspend fun saveCredentials(profileId: Long, credentials: SyncCredentials) { saved[profileId] = credentials }
+        override suspend fun copyCredentials(sourceProfileId: Long, targetProfileId: Long) {
+            saved[sourceProfileId]?.let { saved[targetProfileId] = it }
+        }
+        override suspend fun clearCredentials(profileId: Long) { saved.remove(profileId) }
         override fun observeBoundProvider(profileId: Long): Flow<SyncProviderType?> = flowOf(null)
     }
 

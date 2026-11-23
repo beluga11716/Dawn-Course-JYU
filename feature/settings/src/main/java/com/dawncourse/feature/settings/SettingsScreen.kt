@@ -2194,7 +2194,7 @@ private fun BindAccountDialog(
  * 规则：
  * - 允许用户省略 scheme（自动补全为 https）
  * - 必须是合法的网络 URL
- * - host/path 中包含 “jwgl” 关键字（覆盖常见正方入口）
+ * - 支持已适配的嘉应学院 WebVPN，以及 host/path 包含 “jwgl” 的常见正方入口
  */
 private fun isZfEndpoint(raw: String): Boolean {
     val trimmed = raw.trim().trimEnd('/')
@@ -2210,7 +2210,8 @@ private fun isZfEndpoint(raw: String): Boolean {
         val uri = Uri.parse(candidate)
         val host = uri.host.orEmpty()
         val path = uri.path.orEmpty()
-        (host + path).lowercase().contains("jwgl")
+        com.dawncourse.core.domain.model.ZhengFangWebVpn.isSupportedEntry(candidate) ||
+            (host + path).lowercase().contains("jwgl")
     }.getOrDefault(false)
 }
 

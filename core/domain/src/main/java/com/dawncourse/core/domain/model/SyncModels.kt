@@ -26,7 +26,9 @@ enum class SyncCredentialType {
     /** 用户名 + 密码登录 */
     PASSWORD,
     /** 令牌/口令（如 WakeUp 口令、RefreshToken） */
-    TOKEN
+    TOKEN,
+    /** 正方 WebVPN 会话；secret 保留原密码供前台重新登录。 */
+    SESSION
 }
 
 /**
@@ -48,7 +50,41 @@ data class SyncCredentials(
     /** 密钥（PASSWORD=密码；TOKEN=令牌/口令） */
     val secret: String,
     /** 可选：教务系统入口地址（如 https://jw.example.edu.cn） */
-    val endpointUrl: String? = null
+    val endpointUrl: String? = null,
+    /** 仅随 Profile 凭据加密保存，禁止写入日志或普通偏好。 */
+    val zhengFangSession: ZhengFangSession? = null,
+) {
+    override fun toString(): String = "SyncCredentials(provider=$provider, type=$type, <redacted>)"
+}
+
+/** WebView 捕获的会话。学年学期必须来自用户明确选择，后台不猜测学期。 */
+data class ZhengFangSession(
+    val cookieHeader: String,
+    val academicYear: String,
+    val termCode: String,
+    val semesterId: Long,
+    val userAgent: String,
+    val capturedAt: Long,
+) {
+    override fun toString(): String = "ZhengFangSession(<redacted>)"
+}
+
+/** 周期任务携带不可变目标，运行时不能改用当前活动课表。 */
+data class ZhengFangSyncTarget(
+    val profileId: Long,
+    val semesterId: Long,
+    val sourceBindingId: String,
+)
+
+/** 无凭据的状态快照，可存入 DataStore；每个绑定独立保存结果和过期提醒状态。 */
+data class ZhengFangSyncState(
+    val target: ZhengFangSyncTarget,
+    val autoSyncEnabled: Boolean = false,
+    val lastAttemptAt: Long = 0L,
+    val lastSuccessAt: Long = 0L,
+    val message: String = "会话已保存",
+    val errorCode: SyncErrorCode? = null,
+    val authNotificationSent: Boolean = false,
 )
 
 /** 自动更新来源与确定的 Profile/学期落点之间的稳定绑定。 */

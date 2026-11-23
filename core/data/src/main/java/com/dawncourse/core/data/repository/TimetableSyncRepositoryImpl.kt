@@ -22,6 +22,7 @@ class TimetableSyncRepositoryImpl @Inject constructor(
     private val credentialsRepository: CredentialsRepository,
     private val profileRepository: TimetableProfileRepository,
     private val profileSelectionCoordinator: ProfileSelectionCoordinator,
+    private val zhengFangSyncRepository: com.dawncourse.core.domain.repository.ZhengFangSyncRepository,
 ) : TimetableSyncRepository {
 
     override suspend fun syncCurrentSemester(): TimetableSyncResult {
@@ -58,7 +59,12 @@ class TimetableSyncRepositoryImpl @Inject constructor(
                     sourceBindingId = capturedBindingId,
                 )
             }
-            SyncProviderType.QIDI, SyncProviderType.ZF -> {
+            SyncProviderType.ZF -> zhengFangSyncRepository.sync(
+                com.dawncourse.core.domain.model.ZhengFangSyncTarget(
+                    capturedContext.profile.id, capturedSemester.id, capturedBindingId,
+                ),
+            )
+            SyncProviderType.QIDI -> {
                 TimetableSyncResult.Failure(
                     code = SyncErrorCode.AUTH_FAILED,
                     message = "当前绑定为教务账号，请在主界面使用“自动更新”进入同步页面"

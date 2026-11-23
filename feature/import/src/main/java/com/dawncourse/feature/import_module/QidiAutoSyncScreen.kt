@@ -278,6 +278,7 @@ fun QidiAutoSyncScreen(
     onBackClick: () -> Unit,
     onFinish: () -> Unit,
     provider: SyncProviderType = SyncProviderType.ZF,
+    openLoginOnEntry: Boolean = false,
     viewModel: QidiSyncViewModel = hiltViewModel(),
     importViewModel: ImportViewModel = hiltViewModel()
 ){
@@ -522,7 +523,7 @@ fun QidiAutoSyncScreen(
             addLog("开始读取绑定凭据", SyncLogType.INFO)
             val creds = viewModel.loadQidiCredentials()
             val needProvider = provider
-            if (creds == null || creds.provider != needProvider || creds.type != SyncCredentialType.PASSWORD) {
+            if (creds == null || creds.provider != needProvider || creds.type !in setOf(SyncCredentialType.PASSWORD, SyncCredentialType.SESSION)) {
                 subTitle = "未绑定${providerName}凭据，请在设置中绑定"
                 currentStep = "未绑定账号"
                 addLog("未绑定${providerName}凭据", SyncLogType.WARNING)
@@ -1204,7 +1205,7 @@ fun QidiAutoSyncScreen(
         }
         val creds = viewModel.loadQidiCredentials()
         val needProvider = provider
-        if (creds == null || creds.provider != needProvider || creds.type != SyncCredentialType.PASSWORD) {
+        if (creds == null || creds.provider != needProvider || creds.type !in setOf(SyncCredentialType.PASSWORD, SyncCredentialType.SESSION)) {
             subTitle = "未绑定${providerName}凭据，请在设置中绑定"
             addLog("未找到可用凭据或提供者不一致", SyncLogType.WARNING)
             reportError("未绑定${providerName}凭据")
@@ -1722,6 +1723,10 @@ fun QidiAutoSyncScreen(
                     }
                 }
 
+                if (provider == SyncProviderType.ZF) {
+                    ZhengFangSessionCard(openLoginOnEntry = openLoginOnEntry)
+                }
+
                 Text(
                     text = "同步向导",
                     style = MaterialTheme.typography.titleSmall,
@@ -1985,7 +1990,7 @@ fun QidiAutoSyncScreen(
                                     }
                                 }
                                 val creds = credsForAutoFill
-                                if (isLogin && creds != null && creds.type == SyncCredentialType.PASSWORD) {
+                                if (isLogin && creds != null && creds.type in setOf(SyncCredentialType.PASSWORD, SyncCredentialType.SESSION)) {
                                     val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
                                     // 脚本拉取期间页面可能继续跳转，因此注入前读取 WebView 当前 URL。
                                     val injectionUrl = wv.url?.takeIf(String::isNotBlank) ?: currentWebViewUrl
@@ -2079,7 +2084,7 @@ fun QidiAutoSyncScreen(
                         scope.launch {
                             try {
                                 val creds = credsForAutoFill
-                                if (creds != null && creds.type == SyncCredentialType.PASSWORD) {
+                                if (creds != null && creds.type in setOf(SyncCredentialType.PASSWORD, SyncCredentialType.SESSION)) {
                                     val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
                                     // 脚本拉取期间页面可能继续跳转，因此注入前读取 WebView 当前 URL。
                                     val injectionUrl = wv.url?.takeIf(String::isNotBlank) ?: currentWebViewUrl

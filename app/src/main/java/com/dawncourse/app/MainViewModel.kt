@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -187,10 +189,23 @@ internal fun pairActiveSemesterSchedule(
 @HiltViewModel
 class MainViewModel @Inject constructor(
     settingsRepository: SettingsRepository,
-    profileRepository: TimetableProfileRepository,
+    private val profileRepository: TimetableProfileRepository,
     courseRepository: CourseRepository,
-    private val muteRecoveryController: MuteRecoveryUserActionController
+    private val muteRecoveryController: MuteRecoveryUserActionController,
+    zhengFangSyncRepository: com.dawncourse.core.domain.repository.ZhengFangSyncRepository,
 ) : ViewModel() {
+    val zhengFangAutoSyncTargets = zhengFangSyncRepository.states
+        .map { states -> states.filter { it.autoSyncEnabled }.map { it.target }.toSet().toList() }
+        .distinctUntilChanged()
+
+    /** 只响应用户点通知后的显式选择，普通后台任务永不调用本方法。 */
+    suspend fun openZhengFangLoginTarget(profileId: Long, semesterId: Long): Boolean {
+        if (profileRepository.observeSemesters(profileId).first().none { it.id == semesterId }) return false
+        profileRepository.switch(profileId)
+        profileRepository.setActiveSemester(profileId, semesterId)
+        val context = profileRepository.observeActiveContext().first()
+        return context?.profile?.id == profileId && context.semester?.id == semesterId
+    }
     init {
         // 进程重建时从持久状态补齐专用恢复 Work；不依赖通知权限或触发器注册表。
         viewModelScope.launch {

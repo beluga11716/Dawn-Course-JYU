@@ -438,21 +438,29 @@ class ProfileSelectionCoordinator @Inject constructor(
         profileId: Long,
         credentials: SyncCredentials,
     ): CredentialBindingMutationResult = withOperationalProfileMutation {
+        saveCredentialsAndRebindLocked(profileId, credentials)
+    }
+
+    /** 调用者必须已持有操作门禁与选择锁；会话捕获和设置绑定共用补偿协议。 */
+    private suspend fun saveCredentialsAndRebindLocked(
+        profileId: Long,
+        credentials: SyncCredentials,
+    ): CredentialBindingMutationResult = run rebind@ {
         val activeProfileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
         if (activeProfileId != profileId) {
-            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("活动课表已变化")
+            return@rebind CredentialBindingMutationResult.Rejected("活动课表已变化")
         }
         val profile = profileDao.getProfileById(profileId)
-            ?: return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("课表不存在")
+            ?: return@rebind CredentialBindingMutationResult.Rejected("课表不存在")
         val semester = profile.activeSemesterId?.let { semesterDao.getSemesterById(it) }
         if (profile.activeSemesterId != null && semester?.profileId != profileId) {
-            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("活动学期不属于目标课表")
+            return@rebind CredentialBindingMutationResult.Rejected("活动学期不属于目标课表")
         }
         val oldBinding = semester?.let { bindingDao.getBySemesterOnce(it.id) }
         if (oldBinding != null &&
             (oldBinding.profileId != profileId || oldBinding.semesterId != semester.id)
         ) {
-            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("同步来源绑定归属异常")
+            return@rebind CredentialBindingMutationResult.Rejected("同步来源绑定归属异常")
         }
         val previousCredentials = credentialsRepository.getCredentials(profileId)
         try {
@@ -461,10 +469,10 @@ class ProfileSelectionCoordinator @Inject constructor(
             val rollbackFailure = restoreCredentials(profileId, previousCredentials)
             if (rollbackFailure != null) {
                 failure.addSuppressed(rollbackFailure)
-                return@withOperationalProfileMutation CredentialBindingMutationResult.Inconsistent("凭据写入失败且无法恢复原凭据")
+                return@rebind CredentialBindingMutationResult.Inconsistent("凭据写入失败且无法恢复原凭据")
             }
             if (failure is CancellationException) throw failure
-            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("凭据写入失败")
+            return@rebind CredentialBindingMutationResult.Rejected("凭据写入失败")
         }
         try {
             val sourceBindingId = database.withTransaction {
@@ -538,6 +546,40 @@ class ProfileSelectionCoordinator @Inject constructor(
                 CredentialBindingMutationResult.Rejected("解绑失败，原凭据已恢复")
             }
         }
+    }
+
+    /** 保存验证后的 WebVPN 会话，同时作废旧会话的在途任务；失败时补偿原密文。 */
+    internal suspend fun saveSessionForCapturedBinding(
+        profileId: Long,
+        semesterId: Long,
+        sourceBindingId: String,
+        expectedCredentials: SyncCredentials,
+        credentials: SyncCredentials,
+    ): CredentialBindingMutationResult = withOperationalProfileMutation {
+        val rejected = CredentialBindingMutationResult.Rejected("同步目标或凭据已变化")
+        if (activeSelectionStore.activeProfileId.first() != profileId) return@withOperationalProfileMutation rejected
+        val profile = profileDao.getProfileById(profileId) ?: return@withOperationalProfileMutation rejected
+        val semester = semesterDao.getSemesterById(semesterId) ?: return@withOperationalProfileMutation rejected
+        val binding = bindingDao.getBySemesterOnce(semesterId) ?: return@withOperationalProfileMutation rejected
+        if (profile.activeSemesterId != semesterId || semester.profileId != profileId ||
+            binding.profileId != profileId || binding.semesterId != semesterId || binding.sourceBindingId != sourceBindingId ||
+            binding.provider != SyncProviderType.ZF.name ||
+            credentialsRepository.getCredentials(profileId) != expectedCredentials
+        ) return@withOperationalProfileMutation rejected
+        saveCredentialsAndRebindLocked(profileId, credentials)
+    }
+
+    /** 只检查既存 binding，不创建或切换来源。 */
+    internal suspend fun isCapturedBindingValid(
+        profileId: Long,
+        semesterId: Long,
+        sourceBindingId: String,
+    ): Boolean = withOperationalProfileMutation {
+        val binding = bindingDao.getBySemesterOnce(semesterId)
+        binding?.sourceBindingId == sourceBindingId && binding.profileId == profileId &&
+            binding.semesterId == semesterId &&
+            binding.provider == SyncProviderType.ZF.name &&
+            semesterDao.getSemesterById(semesterId)?.profileId == profileId
     }
 
     /** 网络同步提交门禁：只复核启动时捕获的固定目标与 binding，不依赖当前 UI 选择。 */
