@@ -36,6 +36,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
@@ -493,39 +495,43 @@ class ProfileSelectionCoordinator @Inject constructor(
             ?: return@withOperationalProfileMutation ZhengFangLoginImportResult.NeedsStartDate(snapshot.term)
         val weekCount = maxOf(matching?.weekCount ?: 20, courses.maxOf { it.endWeek })
         validateSemesterSpec(NewSemesterSpec(snapshot.term.name, startDate, weekCount))
-        var credentialsAttempted = false
-        try {
-            database.withTransaction {
-                val profile = profileDao.getProfileById(profileId) ?: error("课表不存在")
-                val semester = matching ?: SemesterEntity(profileId = profileId, name = snapshot.term.name,
-                    startDate = startDate, weekCount = weekCount).let { it.copy(id = semesterDao.insertSemester(it)) }
-                if (semester.weekCount < weekCount) semesterDao.updateSemester(semester.copy(weekCount = weekCount))
-                val session = ZhengFangSession(snapshot.cookieHeader, snapshot.term.year, snapshot.term.code,
-                    semester.id, snapshot.userAgent, System.currentTimeMillis())
-                credentialsAttempted = true
-                credentialsRepository.saveCredentials(profileId,
-                    expectedCredentials.copy(type = SyncCredentialType.SESSION, zhengFangSession = session))
-                bindingDao.deleteBySemester(semester.id)
-                val now = System.currentTimeMillis()
-                val binding = SyncSourceBindingEntity(sourceBindingId = UUID.randomUUID().toString(),
-                    profileId = profileId, semesterId = semester.id, provider = SyncProviderType.ZF.name,
-                    createdAt = now, updatedAt = now)
-                bindingDao.insert(binding)
-                courseDao.deleteCoursesBySemester(semester.id)
-                courseDao.insertCourses(courses.map { it.copy(id = 0L, semesterId = semester.id).toEntity() })
-                profileDao.updateActiveSemesterId(profileId, semester.id)
-                ZhengFangLoginImportResult.Success(
-                    ActiveTimetableContext(profile.copy(activeSemesterId = semester.id).toDomain(),
-                        semester.copy(weekCount = weekCount).toDomain()),
-                    ZhengFangSyncTarget(profileId, semester.id, binding.sourceBindingId), courses.size)
+        currentCoroutineContext().ensureActive()
+        // 临界区开始后完成提交或补偿；不能把提交结果交付时的取消误判成 Room 回滚。
+        withContext(NonCancellable) {
+            var credentialsAttempted = false
+            try {
+                database.withTransaction {
+                    val profile = profileDao.getProfileById(profileId) ?: error("课表不存在")
+                    val semester = matching ?: SemesterEntity(profileId = profileId, name = snapshot.term.name,
+                        startDate = startDate, weekCount = weekCount).let { it.copy(id = semesterDao.insertSemester(it)) }
+                    if (semester.weekCount < weekCount) semesterDao.updateSemester(semester.copy(weekCount = weekCount))
+                    val session = ZhengFangSession(snapshot.cookieHeader, snapshot.term.year, snapshot.term.code,
+                        semester.id, snapshot.userAgent, System.currentTimeMillis())
+                    credentialsAttempted = true
+                    credentialsRepository.saveCredentials(profileId,
+                        expectedCredentials.copy(type = SyncCredentialType.SESSION, zhengFangSession = session))
+                    bindingDao.deleteBySemester(semester.id)
+                    val now = System.currentTimeMillis()
+                    val binding = SyncSourceBindingEntity(sourceBindingId = UUID.randomUUID().toString(),
+                        profileId = profileId, semesterId = semester.id, provider = SyncProviderType.ZF.name,
+                        createdAt = now, updatedAt = now)
+                    bindingDao.insert(binding)
+                    courseDao.deleteCoursesBySemester(semester.id)
+                    courseDao.insertCourses(courses.map { it.copy(id = 0L, semesterId = semester.id).toEntity() })
+                    profileDao.updateActiveSemesterId(profileId, semester.id)
+                    ZhengFangLoginImportResult.Success(
+                        ActiveTimetableContext(profile.copy(activeSemesterId = semester.id).toDomain(),
+                            semester.copy(weekCount = weekCount).toDomain()),
+                        ZhengFangSyncTarget(profileId, semester.id, binding.sourceBindingId), courses.size)
+                }
+            } catch (failure: Throwable) {
+                if (credentialsAttempted && restoreCredentials(profileId, expectedCredentials) != null) {
+                    return@withContext ZhengFangLoginImportResult.Failure(
+                        SyncErrorCode.RECOVERY_REQUIRED, "导入未完成且凭据恢复失败，请重新打开本页核对账号")
+                }
+                if (failure is CancellationException) throw failure
+                ZhengFangLoginImportResult.Failure(SyncErrorCode.UNKNOWN, "导入未完成，原学期和课程已保留，请重试")
             }
-        } catch (failure: Throwable) {
-            if (credentialsAttempted && restoreCredentials(profileId, expectedCredentials) != null) {
-                return@withOperationalProfileMutation ZhengFangLoginImportResult.Failure(
-                    SyncErrorCode.RECOVERY_REQUIRED, "导入未完成且凭据恢复失败，请重新打开本页核对账号")
-            }
-            if (failure is CancellationException) throw failure
-            ZhengFangLoginImportResult.Failure(SyncErrorCode.UNKNOWN, "导入未完成，原学期和课程已保留，请重试")
         }
     }
 

@@ -570,6 +570,33 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         assertEquals(null, coordinator.observeActiveContext().first()?.semester)
     }
 
+    @Test
+    fun cancellationDuringImportKeepsCommittedSemesterBindingAndCredentialsConsistent() = runBlocking {
+        val profileId = insertProfile("首次登录", 0)
+        activeStore.selectProfile(profileId)
+        val context = requireNotNull(coordinator.observeActiveContext().first())
+        val account = jyuAccount()
+        credentials.saveCredentials(profileId, account)
+        val credentialWritten = CompletableDeferred<Unit>()
+        val finishWrite = CompletableDeferred<Unit>()
+        credentials.afterNextSave = {
+            credentialWritten.complete(Unit)
+            finishWrite.await()
+        }
+        val importing = async(Dispatchers.Default) {
+            coordinator.importZhengFangLogin(context, account, jyuSnapshot(), listOf(course(0L, 0L, false).toDomain()))
+        }
+        credentialWritten.await()
+        importing.cancel()
+        finishWrite.complete(Unit)
+        importing.join()
+        val semester = requireNotNull(coordinator.observeActiveContext().first()?.semester)
+        assertEquals(1, database.semesterDao().countByProfile(profileId))
+        assertEquals(semester.id, credentials.getCredentials(profileId)?.zhengFangSession?.semesterId)
+        assertTrue(database.syncSourceBindingDao().getBySemesterOnce(semester.id) != null)
+        assertEquals(1, database.courseDao().getCoursesBySemesterOnce(semester.id).size)
+    }
+
     private fun jyuAccount() = SyncCredentials(SyncProviderType.ZF, SyncCredentialType.PASSWORD,
         "test-student", "test-password", ZhengFangWebVpn.BASE_URL)
 
@@ -606,9 +633,13 @@ class ProfileSelectionCoordinatorInstrumentedTest {
     private class FakeCredentialsRepository : CredentialsRepository {
         private val saved = mutableMapOf<Long, SyncCredentials>()
         var failNextSaveAfterWrite = false
+        var afterNextSave: (suspend () -> Unit)? = null
         override suspend fun getCredentials(profileId: Long): SyncCredentials? = saved[profileId]
         override suspend fun saveCredentials(profileId: Long, credentials: SyncCredentials) {
             saved[profileId] = credentials
+            val afterSave = afterNextSave
+            afterNextSave = null
+            afterSave?.invoke()
             if (failNextSaveAfterWrite) { failNextSaveAfterWrite = false; throw IOException("test write failure") }
         }
         override suspend fun copyCredentials(sourceProfileId: Long, targetProfileId: Long) {
