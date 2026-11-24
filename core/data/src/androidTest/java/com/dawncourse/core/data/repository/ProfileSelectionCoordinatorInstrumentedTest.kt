@@ -21,10 +21,13 @@ import com.dawncourse.core.domain.model.ProfileMutationResult
 import com.dawncourse.core.domain.model.SyncCredentials
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.repository.CredentialsRepository
+import com.dawncourse.core.domain.repository.CredentialBindingExpectation
+import com.dawncourse.core.domain.repository.CredentialBindingMutationResult
 import java.io.File
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -332,6 +335,59 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         SyncProviderType.ZF, com.dawncourse.core.domain.model.SyncCredentialType.PASSWORD,
         username, "fake-password", com.dawncourse.core.domain.model.ZhengFangWebVpn.BASE_URL,
     )
+
+    @Test
+    fun accountSaveWaitingForSelectionLockRejectsSemesterChangedBeforeCommit() = runBlocking {
+        val first = insertProfile("A", 0)
+        val firstSemester = insertSemester(first)
+        val secondSemester = insertSemester(first)
+        database.timetableProfileDao().updateActiveSemesterId(first, firstSemester)
+        activeStore.selectProfile(first)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val selecting = async(Dispatchers.Default) {
+            coordinator.executeActiveAction(first, firstSemester) {
+                entered.complete(Unit)
+                release.await()
+                database.timetableProfileDao().updateActiveSemesterId(first, secondSemester)
+            }
+        }
+        entered.await()
+        val saving = async(start = CoroutineStart.UNDISPATCHED) {
+            coordinator.saveCredentialsAndRebindIfActive(
+                first, zfCredentials("student-a"), CredentialBindingExpectation(firstSemester, null),
+            )
+        }
+        assertFalse(saving.isCompleted)
+        release.complete(Unit)
+        selecting.await()
+        assertTrue(saving.await() is CredentialBindingMutationResult.Rejected)
+        assertEquals(null, credentials.getCredentials(first))
+        assertEquals(null, database.syncSourceBindingDao().getBySemesterOnce(firstSemester))
+        assertEquals(null, database.syncSourceBindingDao().getBySemesterOnce(secondSemester))
+    }
+
+    @Test
+    fun accountSaveAndUnbindRejectStaleCredentialsInsideSelectionLock() = runBlocking {
+        val first = insertProfile("A", 0)
+        val semester = insertSemester(first)
+        database.timetableProfileDao().updateActiveSemesterId(first, semester)
+        activeStore.selectProfile(first)
+        val original = zfCredentials("student-a")
+        val initial = coordinator.saveCredentialsAndRebindIfActive(
+            first, original, CredentialBindingExpectation(semester, null),
+        ) as CredentialBindingMutationResult.Success
+        val other = zfCredentials("student-b")
+        val stale = CredentialBindingExpectation(semester, null)
+        assertTrue(coordinator.saveCredentialsAndRebindIfActive(first, other, stale) is CredentialBindingMutationResult.Rejected)
+        assertTrue(coordinator.clearCredentialsAndUnbindIfActive(first, stale) is CredentialBindingMutationResult.Rejected)
+        assertEquals(original, credentials.getCredentials(first))
+        assertEquals(initial.sourceBindingId, database.syncSourceBindingDao().getBySemesterOnce(semester)?.sourceBindingId)
+        assertTrue(coordinator.clearCredentialsAndUnbindIfActive(
+            first, CredentialBindingExpectation(semester, original),
+        ) is CredentialBindingMutationResult.Success)
+        assertEquals(null, credentials.getCredentials(first))
+    }
 
     @Test
     fun activeActionGateRejectsOldProfileAfterSwitch() = runBlocking {

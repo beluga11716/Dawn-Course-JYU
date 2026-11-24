@@ -3,6 +3,7 @@ package com.dawncourse.core.data.repository
 import com.dawncourse.core.domain.model.SyncCredentials
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.repository.CredentialBindingMutationResult
+import com.dawncourse.core.domain.repository.CredentialBindingExpectation
 import com.dawncourse.core.domain.repository.SyncSourceBindingRepository
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,12 +26,15 @@ class SyncSourceBindingRepositoryImpl @Inject constructor(
     override suspend fun saveCredentialsAndRebindIfActive(
         profileId: Long,
         credentials: SyncCredentials,
+        expected: CredentialBindingExpectation?,
     ): CredentialBindingMutationResult = profileSelectionCoordinator.saveCredentialsAndRebindIfActive(
         profileId = profileId,
         credentials = credentials,
+        expected = expected,
     )
 
     override suspend fun clearCredentialsAndUnbindIfActive(
         profileId: Long,
-    ): CredentialBindingMutationResult = profileSelectionCoordinator.clearCredentialsAndUnbindIfActive(profileId)
+        expected: CredentialBindingExpectation?,
+    ): CredentialBindingMutationResult = profileSelectionCoordinator.clearCredentialsAndUnbindIfActive(profileId, expected)
 }

@@ -23,7 +23,7 @@ class ZhengFangSessionViewModelTest {
     private val semester = Semester(8L, 1L, "2026 秋", 1L)
     private val context = ActiveTimetableContext(profile, semester)
     private val profiles = Profiles(context)
-    private val accounts = Accounts()
+    private val accounts = Accounts { profiles.active.value }
     private val sync = Sync()
     private val store = ViewModelStore()
     private val saved = SyncCredentials(SyncProviderType.ZF, SyncCredentialType.SESSION, "20260001", "school-password",
@@ -102,6 +102,34 @@ class ZhengFangSessionViewModelTest {
         assertFalse(vm.canLogin.value)
     }
 
+    @Test fun selectionChangeWhileSaveIsPendingCannotRebindAnotherSemester() {
+        val vm = viewModel()
+        accounts.beforeMutation = {
+            profiles.active.value = ActiveTimetableContext(profile.copy(activeSemesterId = 9L), semester.copy(id = 9L))
+        }
+        vm.saveAccount("20260001", "school-password")
+        assertNull(accounts.saved)
+        assertFalse(vm.loginRequested.value)
+        assertEquals("original", accounts.binding)
+    }
+
+    @Test fun credentialsChangeWhileSaveIsPendingCannotBeOverwrittenByOldForm() {
+        val vm = viewModel()
+        accounts.beforeMutation = { accounts.saved = saved }
+        vm.saveAccount("20260002", "new-password")
+        assertSame(saved, accounts.saved)
+        assertFalse(vm.loginRequested.value)
+    }
+
+    @Test fun credentialsChangeWhileUnbindIsPendingCannotEraseAnotherAccount() {
+        accounts.saved = saved
+        val vm = viewModel()
+        val other = saved.copy(username = "20260002")
+        accounts.beforeMutation = { accounts.saved = other }
+        vm.clearAccount()
+        assertSame(other, accounts.saved)
+    }
+
     @Test fun unbindingRemovesSavedCredentialsAndStopsPageSync() {
         accounts.saved = saved
         val vm = viewModel()
@@ -123,23 +151,30 @@ class ZhengFangSessionViewModelTest {
         assertEquals("school-password", accounts.saved?.secret)
     }
 
-    private class Accounts : CredentialsRepository, SyncSourceBindingRepository {
+    private class Accounts(private val activeContext: () -> ActiveTimetableContext?) : CredentialsRepository, SyncSourceBindingRepository {
         var saved: SyncCredentials? = null
         var binding = "original"
         var rejectSave = false
+        var beforeMutation: () -> Unit = {}
+        private fun matches(profileId: Long, expected: CredentialBindingExpectation?): Boolean =
+            expected != null && activeContext()?.profile?.id == profileId &&
+                activeContext()?.semester?.id == expected.semesterId && expected.credentials == saved
         override suspend fun getCredentials(profileId: Long) = saved
         override suspend fun saveCredentials(profileId: Long, credentials: SyncCredentials) { saved = credentials }
         override suspend fun copyCredentials(sourceProfileId: Long, targetProfileId: Long) = error("unused")
         override suspend fun clearCredentials(profileId: Long) { saved = null }
         override fun observeBoundProvider(profileId: Long) = flowOf(saved?.provider)
         override suspend fun ensureIfStillActive(profileId: Long, semesterId: Long, provider: SyncProviderType) = binding
-        override suspend fun saveCredentialsAndRebindIfActive(profileId: Long, credentials: SyncCredentials): CredentialBindingMutationResult {
-            if (rejectSave) return CredentialBindingMutationResult.Rejected("test rejected")
+        override suspend fun saveCredentialsAndRebindIfActive(profileId: Long, credentials: SyncCredentials, expected: CredentialBindingExpectation?): CredentialBindingMutationResult {
+            beforeMutation()
+            if (rejectSave || !matches(profileId, expected)) return CredentialBindingMutationResult.Rejected("test rejected")
             saved = credentials
             binding = "replacement"
             return CredentialBindingMutationResult.Success(binding)
         }
-        override suspend fun clearCredentialsAndUnbindIfActive(profileId: Long): CredentialBindingMutationResult {
+        override suspend fun clearCredentialsAndUnbindIfActive(profileId: Long, expected: CredentialBindingExpectation?): CredentialBindingMutationResult {
+            beforeMutation()
+            if (!matches(profileId, expected)) return CredentialBindingMutationResult.Rejected("test rejected")
             saved = null
             binding = "unbound"
             return CredentialBindingMutationResult.Success(null)

@@ -64,6 +64,7 @@ import com.dawncourse.core.domain.model.ZhengFangSyncTarget
 import com.dawncourse.core.domain.model.ZhengFangWebVpn
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.CredentialBindingMutationResult
+import com.dawncourse.core.domain.repository.CredentialBindingExpectation
 import com.dawncourse.core.domain.repository.SyncSourceBindingRepository
 import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.repository.ZhengFangSyncRepository
@@ -163,7 +164,9 @@ class ZhengFangSessionViewModel @Inject constructor(
             return@runAction
         }
         if (prepared != expectedCredentials) {
-            when (bindings.saveCredentialsAndRebindIfActive(context.profile.id, prepared)) {
+            when (bindings.saveCredentialsAndRebindIfActive(
+                context.profile.id, prepared, CredentialBindingExpectation(semester.id, expectedCredentials),
+            )) {
                 is CredentialBindingMutationResult.Success -> Unit
                 is CredentialBindingMutationResult.Rejected -> {
                     _message.value = "账号未保存，请确认当前课表后重试"
@@ -189,11 +192,14 @@ class ZhengFangSessionViewModel @Inject constructor(
 
     fun clearAccount() = runAction {
         val context = initialContext ?: return@runAction
+        val semester = context.semester ?: return@runAction
         if (credentials.getCredentials(context.profile.id) != expectedCredentials) {
             _message.value = "账号配置已变化，请重新打开同步页"
             return@runAction
         }
-        when (bindings.clearCredentialsAndUnbindIfActive(context.profile.id)) {
+        when (bindings.clearCredentialsAndUnbindIfActive(
+            context.profile.id, CredentialBindingExpectation(semester.id, expectedCredentials),
+        )) {
             is CredentialBindingMutationResult.Success -> {
                 target = null
                 expectedCredentials = null

@@ -23,6 +23,7 @@ import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.TimetableProfile
 import com.dawncourse.core.domain.model.TimetableProfileSummary
 import com.dawncourse.core.domain.repository.CredentialBindingMutationResult
+import com.dawncourse.core.domain.repository.CredentialBindingExpectation
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import java.util.UUID
 import javax.inject.Inject
@@ -437,8 +438,21 @@ class ProfileSelectionCoordinator @Inject constructor(
     suspend fun saveCredentialsAndRebindIfActive(
         profileId: Long,
         credentials: SyncCredentials,
+        expected: CredentialBindingExpectation? = null,
     ): CredentialBindingMutationResult = withOperationalProfileMutation {
+        if (!matchesCredentialExpectationLocked(profileId, expected)) {
+            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("活动学期或账号已变化")
+        }
         saveCredentialsAndRebindLocked(profileId, credentials)
+    }
+
+    /** 调用者须持有选择锁；复用原有补偿协议前先比较页面捕获的学期和旧凭据。 */
+    private suspend fun matchesCredentialExpectationLocked(profileId: Long, expected: CredentialBindingExpectation?): Boolean {
+        if (expected == null) return true // 兼容其他平台原有的活动 Profile 绑定入口。
+        val profile = profileDao.getProfileById(profileId) ?: return false
+        return profile.activeSemesterId == expected.semesterId &&
+            semesterDao.getSemesterById(expected.semesterId)?.profileId == profileId &&
+            credentialsRepository.getCredentials(profileId) == expected.credentials
     }
 
     /** 调用者必须已持有操作门禁与选择锁；会话捕获和设置绑定共用补偿协议。 */
@@ -516,10 +530,14 @@ class ProfileSelectionCoordinator @Inject constructor(
     /** 清除凭据与 binding，先使文件失效，再在同一锁内使旧网络任务失效。 */
     suspend fun clearCredentialsAndUnbindIfActive(
         profileId: Long,
+        expected: CredentialBindingExpectation? = null,
     ): CredentialBindingMutationResult = withOperationalProfileMutation {
         val activeProfileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
         if (activeProfileId != profileId || profileDao.getProfileById(profileId) == null) {
             return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("活动课表已变化")
+        }
+        if (!matchesCredentialExpectationLocked(profileId, expected)) {
+            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("活动学期或账号已变化")
         }
         val previousCredentials = credentialsRepository.getCredentials(profileId)
         try {

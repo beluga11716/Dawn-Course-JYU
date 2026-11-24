@@ -10,6 +10,9 @@ sealed interface CredentialBindingMutationResult {
     data class Inconsistent(val reason: String) : CredentialBindingMutationResult
 }
 
+/** 同步页捕获的写入前置条件；须在选择锁内核验，null 凭据表示预期尚未绑定。 */
+data class CredentialBindingExpectation(val semesterId: Long, val credentials: SyncCredentials?)
+
 /** 自动更新来源绑定的领域入口，供 Feature 在不依赖 data 实现的前提下固定同步目标。 */
 interface SyncSourceBindingRepository {
     /** 仅当 profile/semester 仍是活动目标时创建或返回稳定绑定 ID。 */
@@ -23,10 +26,12 @@ interface SyncSourceBindingRepository {
     suspend fun saveCredentialsAndRebindIfActive(
         profileId: Long,
         credentials: SyncCredentials,
+        expected: CredentialBindingExpectation? = null,
     ): CredentialBindingMutationResult
 
     /** 清除活动 Profile 凭据并立即作废其在途同步绑定。 */
     suspend fun clearCredentialsAndUnbindIfActive(
         profileId: Long,
+        expected: CredentialBindingExpectation? = null,
     ): CredentialBindingMutationResult
 }
