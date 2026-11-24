@@ -259,27 +259,6 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 绑定正方教务账号（用户名+密码+入口地址）
-     */
-    fun bindZfCredentials(endpoint: String, username: String, password: String) {
-        viewModelScope.launch {
-            val profileId = activeProfileId() ?: return@launch
-            val normalized = normalizeEndpointInput(endpoint)
-            val creds = SyncCredentials(
-                provider = SyncProviderType.ZF,
-                type = SyncCredentialType.PASSWORD,
-                username = username.trim(),
-                secret = password,
-                endpointUrl = normalized
-            )
-            publishCredentialBindingResult(
-                syncSourceBindingRepository.saveCredentialsAndRebindIfActive(profileId, creds),
-                CredentialBindingUiEvent.Saved,
-            )
-        }
-    }
-
-    /**
      * 重置本地备份 UI 状态
      */
     fun resetLocalBackupState() {

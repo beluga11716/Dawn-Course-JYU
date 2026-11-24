@@ -72,7 +72,6 @@ import android.widget.Toast
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
-import android.webkit.URLUtil
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -108,6 +107,7 @@ fun SettingsScreen(
     onBackClick: () -> Unit,
     onCheckUpdate: () -> Unit,
     onOpenProfileManager: () -> Unit,
+    onOpenZhengFangSync: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -307,6 +307,7 @@ fun SettingsScreen(
             DataSyncSection(
                 boundProvider = boundProvider,
                 lastSyncDesc = lastSyncDesc,
+                onOpenZhengFangSync = onOpenZhengFangSync,
                 onShowDialog = { dialogState = it },
                 onOpenWebDav = {
                     showWebDavSheet = true
@@ -368,8 +369,7 @@ fun SettingsScreen(
         viewModel = viewModel,
         maxCourseWeek = maxCourseWeek,
         context = context,
-        onDismiss = { dialogState = SettingsDialogState.None },
-        onChangeDialog = { dialogState = it }
+        onDismiss = { dialogState = SettingsDialogState.None }
     )
 
     if (showWebDavSheet) {
@@ -425,8 +425,6 @@ private sealed class SettingsDialogState {
     data object Semester : SettingsDialogState()
     data object SectionTime : SettingsDialogState()
     data object BatchUpdateDuration : SettingsDialogState()
-    data object SyncProvider : SettingsDialogState()
-    data object BindZf : SettingsDialogState()
     data object ClearAllData : SettingsDialogState()
     data object Permission : SettingsDialogState()
     data class UnbindConfirm(val provider: SyncProviderType) : SettingsDialogState()
@@ -1045,6 +1043,7 @@ private fun NotificationSection(
 private fun DataSyncSection(
     boundProvider: SyncProviderType?,
     lastSyncDesc: String,
+    onOpenZhengFangSync: () -> Unit,
     onShowDialog: (SettingsDialogState) -> Unit,
     onOpenWebDav: () -> Unit,
     onOpenLocalBackup: () -> Unit,
@@ -1052,20 +1051,19 @@ private fun DataSyncSection(
 ) {
     PreferenceCategory(title = "数据与同步") {
         SettingRow(
-            title = "账号绑定（测试）",
-            description = if (boundProvider != null) {
-                "已绑定 ${boundProvider.name}"
-            } else {
-                "未绑定"
-            },
+            title = "嘉应学院登录与同步",
+            description = "账号、网页登录和自动更新统一在同步页管理",
             icon = { Icon(Icons.Default.CloudSync, null) },
+            onClick = onOpenZhengFangSync,
+            showDivider = true
+        )
+        if (boundProvider != null && boundProvider != SyncProviderType.ZF) SettingRow(
+            title = "其他平台账号",
+            description = "已绑定 ${boundProvider.name}",
+            icon = { Icon(Icons.Default.AccountCircle, null) },
             action = {
-                if (boundProvider != null) {
-                    TextButton(onClick = { onShowDialog(SettingsDialogState.UnbindConfirm(boundProvider)) }) {
-                        Text("解绑")
-                    }
-                } else {
-                    TextButton(onClick = { onShowDialog(SettingsDialogState.BindZf) }) { Text("绑定") }
+                TextButton(onClick = { onShowDialog(SettingsDialogState.UnbindConfirm(boundProvider)) }) {
+                    Text("解绑")
                 }
             },
             showDivider = true
@@ -1121,8 +1119,7 @@ private fun SettingsDialogManager(
     viewModel: SettingsViewModel,
     maxCourseWeek: Int,
     context: Context,
-    onDismiss: () -> Unit,
-    onChangeDialog: (SettingsDialogState) -> Unit
+    onDismiss: () -> Unit
 ) {
     val dialogVisible = dialogState != SettingsDialogState.None
     // 弹窗卡片渐入/渐出动画
@@ -1182,92 +1179,6 @@ private fun SettingsDialogManager(
                         TextButton(onClick = onDismiss) {
                             Text("取消")
                         }
-                    }
-                )
-            }
-            SettingsDialogState.SyncProvider -> {
-                AlertDialog(
-                    onDismissRequest = onDismiss,
-                    title = { Text("绑定正方教务") },
-                    text = {
-                        Column {
-                            Text(
-                                text = "仅支持正方教务账号绑定，绑定后可自动更新课表。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            // 绑定入口卡片
-                            Card(
-                                onClick = { onChangeDialog(SettingsDialogState.BindZf) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(16.dp),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainer
-                                )
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(48.dp)
-                                            .background(
-                                                color = MaterialTheme.colorScheme.primaryContainer,
-                                                shape = CircleShape
-                                            ),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.AccountBalance,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(16.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "正方教务",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = "适用于正方教务系统",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                    )
-                                }
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = onDismiss) { Text("取消") }
-                    }
-                )
-            }
-            SettingsDialogState.BindZf -> {
-                BindAccountDialog(
-                    title = "绑定正方教务",
-                    onDismiss = onDismiss,
-                    onConfirm = { endpoint, username, password ->
-                        viewModel.bindZfCredentials(endpoint = endpoint, username = username, password = password)
-                        onDismiss()
                     }
                 )
             }
@@ -2087,132 +1998,6 @@ private fun WebDavSyncSheet(
             }
         )
     }
-}
-
-/**
- * 绑定教务账号对话框
- *
- * 负责收集入口地址、学号与密码，并在提交时进行正方入口校验。
- *
- * @param title 对话框标题
- * @param onDismiss 关闭回调
- * @param onConfirm 校验通过后的提交回调
- */
-@Composable
-private fun BindAccountDialog(
-    title: String,
-    onDismiss: () -> Unit,
-    onConfirm: (endpoint: String, username: String, password: String) -> Unit
-) {
-    // 教务入口地址
-    var endpoint by remember { mutableStateOf("") }
-    // 学号（账号）
-    var username by remember { mutableStateOf("") }
-    // 密码
-    var password by remember { mutableStateOf("") }
-    // 入口校验错误提示
-    var endpointError by remember { mutableStateOf<String?>(null) }
-    // 基础必填校验
-    val isValid = endpoint.isNotBlank() && username.isNotBlank() && password.isNotBlank()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                // 入口地址输入
-                OutlinedTextField(
-                    value = endpoint,
-                    onValueChange = {
-                        endpoint = it
-                        // 当地址被清空或通过正方识别时，自动清理错误提示
-                        if (endpointError != null && (it.isBlank() || isZfEndpoint(it))) {
-                            endpointError = null
-                        }
-                    },
-                    label = { Text("教务地址") },
-                    placeholder = { Text("例如: http://jwgl.xxx.edu.cn") },
-                    leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    // 存在错误时展示红色错误态
-                    isError = endpointError != null,
-                    // 入口错误提示
-                    supportingText = {
-                        if (endpointError != null) {
-                            Text(endpointError!!, color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                // 学号输入
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("学号") },
-                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                // 密码输入
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("密码") },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp)
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    // 先校验入口是否为正方教务系统
-                    if (!isZfEndpoint(endpoint)) {
-                        endpointError = "暂时只支持正方教务系统，请填写正方教务入口地址"
-                        return@TextButton
-                    }
-                    // 校验通过后提交
-                    onConfirm(endpoint, username, password)
-                },
-                enabled = isValid
-            ) { Text("绑定") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
-}
-
-/**
- * 判断入口地址是否符合正方教务系统特征
- *
- * 规则：
- * - 允许用户省略 scheme（自动补全为 https）
- * - 必须是合法的网络 URL
- * - 支持已适配的嘉应学院 WebVPN，以及 host/path 包含 “jwgl” 的常见正方入口
- */
-private fun isZfEndpoint(raw: String): Boolean {
-    val trimmed = raw.trim().trimEnd('/')
-    if (trimmed.isBlank()) return false
-    val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-        trimmed
-    } else {
-        "https://$trimmed"
-    }
-    val candidate = if (URLUtil.isNetworkUrl(withScheme)) withScheme else URLUtil.guessUrl(withScheme)
-    if (!URLUtil.isNetworkUrl(candidate)) return false
-    return runCatching {
-        val uri = Uri.parse(candidate)
-        val host = uri.host.orEmpty()
-        val path = uri.path.orEmpty()
-        com.dawncourse.core.domain.model.ZhengFangWebVpn.isSupportedEntry(candidate) ||
-            (host + path).lowercase().contains("jwgl")
-    }.getOrDefault(false)
 }
 
 

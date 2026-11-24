@@ -31,6 +31,7 @@ import com.dawncourse.feature.import_module.ImportScreen
 import com.dawncourse.feature.settings.SettingsScreen
 import com.dawncourse.feature.settings.ProfileManagementScreen
 import com.dawncourse.feature.import_module.QidiAutoSyncScreen
+import com.dawncourse.feature.import_module.ZhengFangSyncScreen
 import com.dawncourse.feature.timetable.TimetableRoute
 import android.net.Uri
 import android.widget.Toast
@@ -327,7 +328,7 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("course_editor?courseId=$courseId")
                                     },
                                     onNavigateToQidiSync = {
-                                        navController.navigate("zf_sync")
+                                        navController.navigate("qidi_sync")
                                     },
                                     onNavigateToZfSync = {
                                         navController.navigate("zf_sync")
@@ -356,6 +357,9 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onOpenProfileManager = {
                                         navController.navigate("profile_manager")
+                                    },
+                                    onOpenZhengFangSync = {
+                                        navController.navigate("zf_sync")
                                     }
                                 )
                             }
@@ -386,16 +390,22 @@ class MainActivity : ComponentActivity() {
                             }
                             
 
-                            // 正方自动同步页面（复用同一实现）
+                            // 嘉应学院账号、网页登录和后台同步统一入口。
                             composable(
                                 "zf_sync?login={login}",
                                 arguments = listOf(navArgument("login") { type = NavType.BoolType; defaultValue = false }),
                             ) { entry ->
+                                ZhengFangSyncScreen(
+                                    onBackClick = { navController.popBackStack() },
+                                    openLoginOnEntry = entry.arguments?.getBoolean("login") == true,
+                                )
+                            }
+                            // 其他平台保留原流程，不再混入嘉应学院入口。
+                            composable("qidi_sync") {
                                 QidiAutoSyncScreen(
                                     onBackClick = { navController.popBackStack() },
                                     onFinish = { navController.popBackStack() },
-                                    provider = com.dawncourse.core.domain.model.SyncProviderType.ZF,
-                                    openLoginOnEntry = entry.arguments?.getBoolean("login") == true,
+                                    provider = com.dawncourse.core.domain.model.SyncProviderType.QIDI,
                                 )
                             }
                             

@@ -1,4 +1,21 @@
-# Dawn Course（破晓课程表）
+# Dawn Course JYU（嘉应学院二开版）
+
+本仓库是面向嘉应学院的个人二次开发版本，不是原项目官方仓库。基于
+[HF-CYGG/Dawn-Course](https://github.com/HF-CYGG/Dawn-Course)，本地开发来源为
+[YeMiao_cats/Dawn-Course](https://gitee.com/YeMiao_cats/Dawn-Course)。保留原项目版权说明与 GPL-3.0 许可证。
+
+本二开版新增嘉应学院 WebVPN 会话后台同步，并将教务账号、网页登录、立即同步与每 12 小时自动更新集中在「自动更新」页面。
+首次使用直接从课表主页进入「自动更新」，不需要先去设置绑定；旧正方登录弹窗和同步向导已从此流程移除。
+其他平台已有绑定、普通文件导入、WebDAV 和本地备份功能保留。
+
+操作说明、验证范围和限制见 [WEBVPN_SYNC.md](WEBVPN_SYNC.md)。发布的 APK 使用本机 debug 签名，适合当前测试；
+已安装此前本机签名的 WebVPN 版本可覆盖安装。不同签名版本请先备份数据。
+
+以下保留原项目介绍。
+
+---
+
+## Dawn Course（破晓课程表）
 
 > 免费、开源（GPL-3.0）、无广告、本地优先的 Android 课程表应用  
 > 专注离线可用、数据可迁移与长期可维护的现代 Android 工程实践（Kotlin + Compose + Clean Architecture）

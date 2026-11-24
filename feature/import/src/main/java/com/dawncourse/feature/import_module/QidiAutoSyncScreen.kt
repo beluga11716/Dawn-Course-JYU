@@ -277,8 +277,7 @@ private fun buildDiffItems(
 fun QidiAutoSyncScreen(
     onBackClick: () -> Unit,
     onFinish: () -> Unit,
-    provider: SyncProviderType = SyncProviderType.ZF,
-    openLoginOnEntry: Boolean = false,
+    provider: SyncProviderType = SyncProviderType.QIDI,
     viewModel: QidiSyncViewModel = hiltViewModel(),
     importViewModel: ImportViewModel = hiltViewModel()
 ){
@@ -1721,10 +1720,6 @@ fun QidiAutoSyncScreen(
                             }
                         }
                     }
-                }
-
-                if (provider == SyncProviderType.ZF) {
-                    ZhengFangSessionCard(openLoginOnEntry = openLoginOnEntry)
                 }
 
                 Text(

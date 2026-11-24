@@ -82,7 +82,7 @@ fun TimetableRoute(
                 SyncProviderType.WAKEUP -> viewModel.showUserMessage("WakeUp 口令自动更新已下线，请绑定正方教务账号")
                 // WebDAV 仅在设置页配置与操作
                 SyncProviderType.WEBDAV -> viewModel.showUserMessage("WebDAV 同步请在设置页进行")
-                null -> viewModel.showUserMessage("未绑定自动更新账号，请在设置→数据与同步绑定正方教务")
+                null -> onNavigateToZfSync()
             }
         },
         onSettingsClick = onSettingsClick,
