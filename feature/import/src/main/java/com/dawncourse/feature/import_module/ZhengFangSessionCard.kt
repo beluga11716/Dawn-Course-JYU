@@ -62,6 +62,9 @@ import com.dawncourse.core.domain.model.ZhengFangSession
 import com.dawncourse.core.domain.model.ZhengFangSyncState
 import com.dawncourse.core.domain.model.ZhengFangSyncTarget
 import com.dawncourse.core.domain.model.ZhengFangWebVpn
+import com.dawncourse.core.domain.model.ZhengFangAcademicTerm
+import com.dawncourse.core.domain.model.ZhengFangLoginSnapshot
+import com.dawncourse.core.domain.model.ZhengFangLoginImportResult
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.CredentialBindingMutationResult
 import com.dawncourse.core.domain.repository.CredentialBindingExpectation
@@ -79,7 +82,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 
 /** 不保留 WebView 或 Context，只接收 UI 主线程读取的 Cookie 快照。 */
@@ -97,7 +102,7 @@ class ZhengFangSessionViewModel @Inject constructor(
     val state = _state.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
-    private val _message = MutableStateFlow("嘉应学院 WebVPN：登录后保存会话，即可在后台更新当前学期")
+    private val _message = MutableStateFlow("嘉应学院 WebVPN：登录后识别学期并导入课表")
     val message = _message.asStateFlow()
     private val _semesterName = MutableStateFlow("")
     val semesterName = _semesterName.asStateFlow()
@@ -111,18 +116,17 @@ class ZhengFangSessionViewModel @Inject constructor(
     val canLogin = _canLogin.asStateFlow()
     private val _loginRequested = MutableStateFlow(false)
     val loginRequested = _loginRequested.asStateFlow()
+    private var pendingImport: ZhengFangLoginSnapshot? = null
+    private val _startDateRequired = MutableStateFlow<ZhengFangAcademicTerm?>(null)
+    val startDateRequired = _startDateRequired.asStateFlow()
 
     init {
         viewModelScope.launch {
             try {
-                val context = profiles.observeActiveContext().first()
+                // 数据库选择流可能先发出 null；等待真实课表，避免永久锁住登录。
+                val context = profiles.observeActiveContext().filterNotNull().first()
                 initialContext = context
-                val semester = context?.semester
-                if (semester == null) {
-                    _message.value = "请先在课表主页选择或创建本地学期，再打开同步页"
-                    return@launch
-                }
-                _semesterName.value = semester.name
+                _semesterName.value = context.semester?.name.orEmpty()
                 val saved = credentials.getCredentials(context.profile.id)
                 expectedCredentials = saved
                 if (saved?.provider != SyncProviderType.ZF || !ZhengFangWebVpn.isSupportedEntry(saved.endpointUrl)) {
@@ -151,8 +155,8 @@ class ZhengFangSessionViewModel @Inject constructor(
     fun saveAccount(username: String, password: String) = runAction {
         val context = initialContext
         val semester = context?.semester
-        if (semester == null || profiles.observeActiveContext().first()?.let {
-                it.profile.id == context.profile.id && it.semester?.id == semester.id
+        if (context == null || profiles.observeActiveContext().first()?.let {
+                it.profile.id == context.profile.id && it.semester?.id == semester?.id
             } != true || credentials.getCredentials(context.profile.id) != expectedCredentials
         ) {
             _message.value = "课表、学期或账号配置已变化，请重新打开同步页"
@@ -165,7 +169,7 @@ class ZhengFangSessionViewModel @Inject constructor(
         }
         if (prepared != expectedCredentials) {
             when (bindings.saveCredentialsAndRebindIfActive(
-                context.profile.id, prepared, CredentialBindingExpectation(semester.id, expectedCredentials),
+                context.profile.id, prepared, CredentialBindingExpectation(semester?.id, expectedCredentials),
             )) {
                 is CredentialBindingMutationResult.Success -> Unit
                 is CredentialBindingMutationResult.Rejected -> {
@@ -182,6 +186,7 @@ class ZhengFangSessionViewModel @Inject constructor(
             }
         }
         expectedCredentials = prepared
+        cancelPendingImport()
         if (attachAccount(context, prepared)) {
             _message.value = "教务账号已保存；请在网页中使用单独的 WebVPN 密码登录"
             _loginRequested.value = true
@@ -192,13 +197,13 @@ class ZhengFangSessionViewModel @Inject constructor(
 
     fun clearAccount() = runAction {
         val context = initialContext ?: return@runAction
-        val semester = context.semester ?: return@runAction
+        val semester = context.semester
         if (credentials.getCredentials(context.profile.id) != expectedCredentials) {
             _message.value = "账号配置已变化，请重新打开同步页"
             return@runAction
         }
         when (bindings.clearCredentialsAndUnbindIfActive(
-            context.profile.id, CredentialBindingExpectation(semester.id, expectedCredentials),
+            context.profile.id, CredentialBindingExpectation(semester?.id, expectedCredentials),
         )) {
             is CredentialBindingMutationResult.Success -> {
                 target = null
@@ -207,6 +212,7 @@ class ZhengFangSessionViewModel @Inject constructor(
                 _canLogin.value = false
                 _loginAccount.value = ""
                 _remoteTerm.value = null
+                cancelPendingImport()
                 _message.value = "教务账号及保存的会话已移除，已有课程保留；网页登录状态需在网页内退出"
             }
             is CredentialBindingMutationResult.Rejected -> _message.value = "账号未解绑，请重新打开同步页核对当前课表"
@@ -220,7 +226,10 @@ class ZhengFangSessionViewModel @Inject constructor(
     }
 
     private suspend fun attachAccount(context: ActiveTimetableContext, saved: SyncCredentials): Boolean {
-        val semester = context.semester ?: return false
+        _loginAccount.value = saved.username.orEmpty()
+        _remoteTerm.value = saved.zhengFangSession?.let { it.academicYear to it.termCode }
+        _canLogin.value = !saved.username.isNullOrBlank()
+        val semester = context.semester ?: return _canLogin.value
         val binding = bindings.ensureIfStillActive(context.profile.id, semester.id, SyncProviderType.ZF)
         if (binding == null) {
             _canLogin.value = false
@@ -228,11 +237,54 @@ class ZhengFangSessionViewModel @Inject constructor(
             return false
         }
         target = ZhengFangSyncTarget(context.profile.id, semester.id, binding)
-        _loginAccount.value = saved.username.orEmpty()
-        _remoteTerm.value = saved.zhengFangSession?.let { it.academicYear to it.termCode }
         _state.value = repository.states.first().firstOrNull { it.target == target }
-        _canLogin.value = !saved.username.isNullOrBlank()
         return _canLogin.value
+    }
+
+    /** 首次登录不依赖本地学期；远端学期来自已登录网页，HTTP 验证后才写入。 */
+    fun importFromLogin(snapshot: ZhengFangLoginSnapshot) = runAction {
+        cancelPendingImport()
+        importSnapshot(snapshot)
+    }
+
+    private suspend fun importSnapshot(snapshot: ZhengFangLoginSnapshot) {
+        val context = initialContext ?: return
+        val saved = expectedCredentials ?: return
+        when (val result = repository.importFromLogin(context, saved, snapshot)) {
+            is ZhengFangLoginImportResult.Success -> {
+                initialContext = result.context
+                target = result.target
+                expectedCredentials = credentials.getCredentials(result.target.profileId)
+                _semesterName.value = result.context.semester?.name.orEmpty()
+                _remoteTerm.value = snapshot.term.year to snapshot.term.code
+                _state.value = repository.states.first().firstOrNull { it.target == result.target }
+                _message.value = "已识别${snapshot.term.name}，导入 ${result.courseCount} 条课程安排" +
+                    if (_state.value == null) "；同步状态保存失败，请重新登录后开启自动同步" else ""
+                cancelPendingImport()
+            }
+            is ZhengFangLoginImportResult.NeedsStartDate -> {
+                pendingImport = snapshot
+                _startDateRequired.value = result.term
+                _message.value = "学期和课表已读取；教务页面未提供开学日期，请确认第一周周一"
+            }
+            is ZhengFangLoginImportResult.Failure -> _message.value = result.message
+        }
+    }
+
+    fun confirmImportStartDate(value: String) = runAction {
+        val snapshot = pendingImport ?: return@runAction
+        val date = runCatching { LocalDate.parse(value.trim()) }.getOrNull()
+        if (date == null || date.dayOfWeek != java.time.DayOfWeek.MONDAY ||
+            date.year !in snapshot.term.year.toInt()..snapshot.term.year.toInt() + 1) {
+            _message.value = "请填写该学年的第一周周一，格式如 2026-09-07"
+            return@runAction
+        }
+        importSnapshot(snapshot.copy(startDate = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()))
+    }
+
+    fun cancelPendingImport() {
+        pendingImport = null
+        _startDateRequired.value = null
     }
 
     fun saveSession(cookie: String?, userAgent: String, year: String, term: String) = runAction {
@@ -342,12 +394,7 @@ internal fun ZhengFangSessionCard(
     val initialized by viewModel.initialized.collectAsState()
     val canLogin by viewModel.canLogin.collectAsState()
     val loginRequested by viewModel.loginRequested.collectAsState()
-    val today = remember { LocalDate.now() }
-    var year by remember { mutableStateOf((if (today.monthValue >= 8) today.year else today.year - 1).toString()) }
-    var term by remember { mutableStateOf(if (today.monthValue in 2..7) "12" else "3") }
-    LaunchedEffect(remoteTerm) {
-        remoteTerm?.let { (savedYear, savedTerm) -> year = savedYear; term = savedTerm }
-    }
+    val startDateRequired by viewModel.startDateRequired.collectAsState()
     var showLogin by remember { mutableStateOf(false) }
     var entryLoginHandled by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var editAccount by remember { mutableStateOf(false) }
@@ -369,7 +416,8 @@ internal fun ZhengFangSessionCard(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("嘉应学院后台同步", style = MaterialTheme.typography.titleMedium)
-            Text("同步到本地学期：${semester.ifBlank { "请先选择学期" }}", style = MaterialTheme.typography.bodySmall)
+            Text(if (semester.isBlank()) "无需先建学期：登录后自动识别教务学期并导入课表"
+                else "当前本地学期：$semester；登录后按教务学期导入，其他学期保留", style = MaterialTheme.typography.bodySmall)
             Text("1. 教务账号", style = MaterialTheme.typography.titleSmall)
             if (!canLogin || editAccount) {
                 OutlinedTextField(username, { username = it }, label = { Text("学号（两个入口使用同一学号）") },
@@ -384,7 +432,7 @@ internal fun ZhengFangSessionCard(
                 Button(onClick = {
                     viewModel.saveAccount(username, password)
                     password = ""
-                }, enabled = initialized && !busy && semester.isNotBlank() && username.isNotBlank() &&
+                }, enabled = initialized && !busy && username.isNotBlank() &&
                     (password.isNotBlank() || (canLogin && username.trim() == loginAccount)), modifier = Modifier.fillMaxWidth()) {
                     Text("保存账号并继续登录")
                 }
@@ -396,13 +444,12 @@ internal fun ZhengFangSessionCard(
                 }
                 TextButton(onClick = { confirmUnbind = true }, enabled = !busy) { Text("解绑教务账号") }
             }
-            Text("2. 登录并保存会话", style = MaterialTheme.typography.titleSmall)
-            Text("请确认远端学年学期与本地学期一致；保存会话后，后台仅更新此学期。", style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(year, { year = it }, Modifier.weight(1f), label = { Text("起始学年") }, singleLine = true, enabled = !busy)
-                OutlinedTextField(term, { term = it }, Modifier.weight(1f), label = { Text("学期代码 3 / 12 / 16") }, singleLine = true, enabled = !busy)
+            Text("2. 登录并自动导入", style = MaterialTheme.typography.titleSmall)
+            Text("从教务课表页读取当前学年、学期与课程；自动创建对应学期，不覆盖其他学期。若无法读取开学日期，只需确认第一周周一。", style = MaterialTheme.typography.bodySmall)
+            remoteTerm?.let { (year, term) ->
+                if (ZhengFangWebVpn.validTerm(year, term)) Text("已保存教务学期：${ZhengFangAcademicTerm(year, term).name}", style = MaterialTheme.typography.bodySmall)
             }
-            OutlinedButton(onClick = { showLogin = true }, enabled = !busy && canLogin && !editAccount, modifier = Modifier.fillMaxWidth()) { Text("登录并记住会话 / 重新登录") }
+            OutlinedButton(onClick = { showLogin = true }, enabled = !busy && canLogin && !editAccount, modifier = Modifier.fillMaxWidth()) { Text("登录教务并导入 / 重新登录") }
             Text("3. 更新课表", style = MaterialTheme.typography.titleSmall)
             Button(onClick = viewModel::syncNow, enabled = !busy && canLogin && !editAccount && state != null, modifier = Modifier.fillMaxWidth()) { Text("立即同步") }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -437,11 +484,25 @@ internal fun ZhengFangSessionCard(
             loginAccount = loginAccount,
             onDismiss = { showLogin = false },
             autofill = viewModel::autofillScript,
-            onSave = { cookie, agent ->
-                viewModel.saveSession(cookie, agent, year.trim(), term.trim())
+            onSave = { snapshot ->
+                viewModel.importFromLogin(snapshot)
                 showLogin = false
             },
         )
+    }
+    startDateRequired?.let { remote ->
+        var firstMonday by remember(remote) { mutableStateOf("") }
+        AlertDialog(onDismissRequest = { if (!busy) viewModel.cancelPendingImport() },
+            title = { Text("确认开学日期") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("已读取${remote.name}和课程。教务页面未提供开学日期，请填写第一周周一，避免课表周次错位。")
+                OutlinedTextField(firstMonday, { firstMonday = it }, label = { Text("第一周周一（YYYY-MM-DD）") },
+                    placeholder = { Text("例如 2026-09-07") }, enabled = !busy, singleLine = true)
+                Text(message, style = MaterialTheme.typography.bodySmall)
+            } },
+            confirmButton = { TextButton(onClick = { viewModel.confirmImportStartDate(firstMonday) },
+                enabled = !busy && firstMonday.isNotBlank()) { Text("确认并导入") } },
+            dismissButton = { TextButton(onClick = viewModel::cancelPendingImport, enabled = !busy) { Text("取消") } })
     }
 }
 
@@ -451,12 +512,30 @@ private fun ZhengFangLoginDialog(
     loginAccount: String,
     onDismiss: () -> Unit,
     autofill: (String?) -> String?,
-    onSave: (String?, String) -> Unit,
+    onSave: (ZhengFangLoginSnapshot) -> Unit,
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var pageReady by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("请完成 WebVPN 和教务登录，然后点保存会话") }
+    var status by remember { mutableStateOf("请完成 WebVPN 和教务登录，核对网页学号后点「识别并导入」") }
     var accountConfirmed by remember { mutableStateOf(false) }
+    var metadata by remember { mutableStateOf<ZhengFangLoginMetadata?>(null) }
+    var navigationGeneration by remember { mutableStateOf(0) }
+    var metadataScript by remember { mutableStateOf("") }
+    LaunchedEffect(webView) {
+        while (true) {
+            val view = webView
+            val url = view?.url
+            val generation = navigationGeneration
+            if (view != null && ZhengFangWebVpn.isTimetableOrigin(url) && metadataScript.isNotBlank()) {
+                view.evaluateJavascript(metadataScript) { raw ->
+                    if (generation == navigationGeneration && view.url == url && ZhengFangWebVpn.isTimetableOrigin(view.url)) {
+                        metadata = ZhengFangLoginMetadata.parse(raw)
+                    }
+                }
+            }
+            delay(1000)
+        }
+    }
     DisposableEffect(Unit) {
         onDispose {
             webView?.stopLoading()
@@ -467,12 +546,14 @@ private fun ZhengFangLoginDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("嘉应学院教务登录", style = MaterialTheme.typography.titleMedium)
+                Text("嘉应学院教务登录与导入", style = MaterialTheme.typography.titleMedium)
                 Text(status, style = MaterialTheme.typography.bodySmall)
+                Text(metadata?.let { "已识别：${it.term.name}" } ?: "登录后将尝试打开个人课表；也可在网页菜单中打开「学生个人课表查询」", style = MaterialTheme.typography.bodySmall)
                 Text("学号：$loginAccount；WebVPN 使用 WebVPN 密码，教务系统使用教务密码。如网页显示其他账号，请先退出后重新登录。", style = MaterialTheme.typography.bodySmall)
                 AndroidView(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     factory = { context ->
+                        metadataScript = context.assets.open("jyu_login_metadata.js").bufferedReader().use { it.readText() }
                         WebView(context).apply {
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
@@ -489,6 +570,8 @@ private fun ZhengFangLoginDialog(
                                 override fun onPageStarted(view: WebView, url: String?, icon: android.graphics.Bitmap?) {
                                     pageReady = false
                                     accountConfirmed = false
+                                    metadata = null
+                                    navigationGeneration++
                                 }
 
                                 override fun onPageFinished(view: WebView, url: String?) {
@@ -515,19 +598,30 @@ private fun ZhengFangLoginDialog(
                     Button(modifier = Modifier.weight(1f), enabled = pageReady && accountConfirmed && loginAccount.isNotBlank(), onClick = {
                         val view = webView
                         if (!ZhengFangWebVpn.isTimetableOrigin(view?.url)) return@Button
-                        val cookies = CookieManager.getInstance()
-                        val portalToken = cookies.getCookie(ZhengFangWebVpn.PORTAL_URL)?.split(';')
-                            ?.filter { it.trim().startsWith("webvpn-token=") }?.joinToString(";")
-                        val header = ZhengFangWebVpn.cookieHeader(
-                            cookies.getCookie(ZhengFangWebVpn.BASE_URL + ZhengFangWebVpn.TIMETABLE_PATH), portalToken,
-                        )
-                        if (header == null) {
-                            status = "尚未读到完整会话，请完成登录并进入正方教务后重试"
-                        } else {
-                            cookies.flush()
-                            onSave(header, view?.settings?.userAgentString.orEmpty())
+                        val url = view?.url
+                        val generation = navigationGeneration
+                        view?.evaluateJavascript(metadataScript) { raw ->
+                            if (view.url != url || generation != navigationGeneration || !accountConfirmed ||
+                                !ZhengFangWebVpn.isTimetableOrigin(view.url)) return@evaluateJavascript
+                            val captured = ZhengFangLoginMetadata.parse(raw)
+                            if (captured == null) {
+                                status = "尚未读取学年学期，请打开学生个人课表页，等待加载后重试"
+                                return@evaluateJavascript
+                            }
+                            val cookies = CookieManager.getInstance()
+                            val portalToken = cookies.getCookie(ZhengFangWebVpn.PORTAL_URL)?.split(';')
+                                ?.filter { it.trim().startsWith("webvpn-token=") }?.joinToString(";")
+                            val header = ZhengFangWebVpn.cookieHeader(
+                                cookies.getCookie(ZhengFangWebVpn.BASE_URL + ZhengFangWebVpn.TIMETABLE_PATH), portalToken,
+                            )
+                            if (header == null) {
+                                status = "尚未读到完整会话，请完成登录并进入正方教务后重试"
+                            } else {
+                                cookies.flush()
+                                onSave(ZhengFangLoginSnapshot(captured.term, header, view.settings.userAgentString.orEmpty(), captured.startDate))
+                            }
                         }
-                    }) { Text("保存会话") }
+                    }) { Text("识别并导入") }
                 }
             }
         }

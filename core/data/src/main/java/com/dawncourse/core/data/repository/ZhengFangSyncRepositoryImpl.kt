@@ -15,6 +15,9 @@ import com.dawncourse.core.domain.model.ZhengFangSession
 import com.dawncourse.core.domain.model.ZhengFangSyncState
 import com.dawncourse.core.domain.model.ZhengFangSyncTarget
 import com.dawncourse.core.domain.model.ZhengFangWebVpn
+import com.dawncourse.core.domain.model.ActiveTimetableContext
+import com.dawncourse.core.domain.model.ZhengFangLoginSnapshot
+import com.dawncourse.core.domain.model.ZhengFangLoginImportResult
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.CredentialBindingMutationResult
 import com.dawncourse.core.domain.repository.ZhengFangSyncRepository
@@ -51,6 +54,48 @@ class ZhengFangSyncRepositoryImpl @Inject constructor(
 
     override val states: Flow<List<ZhengFangSyncState>> = store.data.map { prefs ->
         prefs[key]?.let { gson.fromJson<List<ZhengFangSyncState>>(it, stateType) } ?: emptyList()
+    }
+
+    override suspend fun importFromLogin(
+        expectedContext: ActiveTimetableContext,
+        expectedCredentials: SyncCredentials,
+        snapshot: ZhengFangLoginSnapshot,
+    ): ZhengFangLoginImportResult = mutex.withLock {
+        try {
+            if (expectedCredentials.provider != SyncProviderType.ZF ||
+                !ZhengFangWebVpn.isSupportedEntry(expectedCredentials.endpointUrl)) {
+                return@withLock ZhengFangLoginImportResult.Failure(SyncErrorCode.NO_CREDENTIALS, "请先保存教务账号")
+            }
+            val session = ZhengFangSession(snapshot.cookieHeader, snapshot.term.year, snapshot.term.code,
+                expectedContext.semester?.id ?: 0L, snapshot.userAgent, System.currentTimeMillis())
+            val courses = client.fetch(session)
+            currentCoroutineContext().ensureActive()
+            val previousStates = states.first()
+            val result = coordinator.importZhengFangLogin(expectedContext, expectedCredentials, snapshot, courses)
+            if (result is ZhengFangLoginImportResult.Success) {
+                val previous = previousStates.firstOrNull {
+                    it.target.profileId == result.target.profileId && it.target.semesterId == result.target.semesterId
+                }
+                val now = System.currentTimeMillis()
+                // 课程已经提交，状态存储故障不能被误报成“未导入”并诱使用户重复创建学期。
+                try {
+                    saveState(ZhengFangSyncState(result.target, autoSyncEnabled = previous?.autoSyncEnabled == true,
+                        lastAttemptAt = now, lastSuccessAt = now, message = "已导入 ${result.courseCount} 条课程安排"),
+                        disableOtherSemesters = true)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) { /* 页面会明确提示状态未保存，课程与加密会话仍保留。 */ }
+            }
+            result
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: ZhengFangSyncException) {
+            ZhengFangLoginImportResult.Failure(failure.code, failure.message.orEmpty())
+        } catch (_: IOException) {
+            ZhengFangLoginImportResult.Failure(SyncErrorCode.NETWORK_ERROR, "网络或 WebVPN 暂时不可用，已保留原课表")
+        } catch (_: Exception) {
+            ZhengFangLoginImportResult.Failure(SyncErrorCode.UNKNOWN, "读取课表未完成，已保留原课表，请重试")
+        }
     }
 
     override suspend fun captureSession(
@@ -141,12 +186,13 @@ class ZhengFangSyncRepositoryImpl @Inject constructor(
         target.profileId, target.semesterId, target.sourceBindingId,
     )
 
-    private suspend fun saveState(state: ZhengFangSyncState) {
+    private suspend fun saveState(state: ZhengFangSyncState, disableOtherSemesters: Boolean = false) {
         store.edit { prefs ->
             val current = prefs[key]?.let { gson.fromJson<List<ZhengFangSyncState>>(it, stateType) }.orEmpty()
             val retained = current.filterNot {
                 it.target.profileId == state.target.profileId && it.target.semesterId == state.target.semesterId
-            }
+            }.map { if (disableOtherSemesters && it.target.profileId == state.target.profileId)
+                it.copy(autoSyncEnabled = false) else it }
             prefs[key] = gson.toJson(retained + state)
         }
     }

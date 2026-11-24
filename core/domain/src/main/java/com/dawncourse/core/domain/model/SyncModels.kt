@@ -57,7 +57,7 @@ data class SyncCredentials(
     override fun toString(): String = "SyncCredentials(provider=$provider, type=$type, <redacted>)"
 }
 
-/** WebView 捕获的会话。学年学期必须来自用户明确选择，后台不猜测学期。 */
+/** WebView 捕获的会话。学年学期来自教务网页当前选择，后台不猜测或自动切换学期。 */
 data class ZhengFangSession(
     val cookieHeader: String,
     val academicYear: String,

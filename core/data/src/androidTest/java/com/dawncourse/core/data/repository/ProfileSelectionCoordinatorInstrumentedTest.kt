@@ -20,6 +20,11 @@ import com.dawncourse.core.domain.model.ProfileCreationRequest
 import com.dawncourse.core.domain.model.ProfileMutationResult
 import com.dawncourse.core.domain.model.SyncCredentials
 import com.dawncourse.core.domain.model.SyncProviderType
+import com.dawncourse.core.domain.model.ZhengFangAcademicTerm
+import com.dawncourse.core.domain.model.ZhengFangLoginSnapshot
+import com.dawncourse.core.domain.model.ZhengFangLoginImportResult
+import com.dawncourse.core.domain.model.ZhengFangWebVpn
+import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.CredentialBindingExpectation
 import com.dawncourse.core.domain.repository.CredentialBindingMutationResult
@@ -480,6 +485,97 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         assertEquals(before, database.timetableProfileDao().countProfiles())
     }
 
+    @Test
+    fun firstJyuLoginCreatesSemesterCoursesAndSessionWithoutPrecreatedSemester() = runBlocking {
+        val profileId = insertProfile("首次登录", 0)
+        activeStore.selectProfile(profileId)
+        val context = requireNotNull(coordinator.observeActiveContext().first())
+        val account = jyuAccount()
+        assertTrue(coordinator.saveCredentialsAndRebindIfActive(profileId, account,
+            CredentialBindingExpectation(null, null)) is CredentialBindingMutationResult.Success)
+        val result = coordinator.importZhengFangLogin(context, account, jyuSnapshot(), listOf(course(0L, 0L, false).toDomain()))
+        assertTrue(result is ZhengFangLoginImportResult.Success)
+        result as ZhengFangLoginImportResult.Success
+        assertEquals("2026-2027学年第一学期", result.context.semester?.name)
+        assertEquals(result.target.semesterId, credentials.getCredentials(profileId)?.zhengFangSession?.semesterId)
+        assertEquals(1, database.courseDao().getCoursesBySemesterOnce(result.target.semesterId).size)
+        assertEquals(result.target.semesterId, coordinator.observeActiveContext().first()?.semester?.id)
+    }
+
+    @Test
+    fun missingFirstMondayDoesNotCreateSemesterOrPersistSession() = runBlocking {
+        val profileId = insertProfile("首次登录", 0)
+        activeStore.selectProfile(profileId)
+        val context = requireNotNull(coordinator.observeActiveContext().first())
+        val account = jyuAccount()
+        credentials.saveCredentials(profileId, account)
+        val result = coordinator.importZhengFangLogin(context, account, jyuSnapshot().copy(startDate = null),
+            listOf(course(0L, 0L, false).toDomain()))
+        assertTrue(result is ZhengFangLoginImportResult.NeedsStartDate)
+        assertEquals(0, database.semesterDao().countByProfile(profileId))
+        assertEquals(account, credentials.getCredentials(profileId))
+    }
+
+    @Test
+    fun repeatedLoginReusesRemoteSemesterAndCrossTermKeepsHistoricalCourses() = runBlocking {
+        val profileId = insertProfile("历史课表", 0)
+        activeStore.selectProfile(profileId)
+        credentials.saveCredentials(profileId, jyuAccount())
+        suspend fun importCurrent(snapshot: ZhengFangLoginSnapshot): ZhengFangLoginImportResult.Success {
+            return coordinator.importZhengFangLogin(requireNotNull(coordinator.observeActiveContext().first()),
+                requireNotNull(credentials.getCredentials(profileId)), snapshot,
+                listOf(course(0L, 0L, false).toDomain())) as ZhengFangLoginImportResult.Success
+        }
+        val first = importCurrent(jyuSnapshot())
+        val repeated = importCurrent(jyuSnapshot().copy(startDate = null))
+        assertEquals(first.target.semesterId, repeated.target.semesterId)
+        assertTrue(first.target.sourceBindingId != repeated.target.sourceBindingId)
+        val next = importCurrent(jyuSnapshot().copy(term = ZhengFangAcademicTerm("2026", "12")))
+        assertTrue(first.target.semesterId != next.target.semesterId)
+        assertEquals(2, database.semesterDao().countByProfile(profileId))
+        assertEquals(1, database.courseDao().getCoursesBySemesterOnce(first.target.semesterId).size)
+        assertEquals(1, database.courseDao().getCoursesBySemesterOnce(next.target.semesterId).size)
+    }
+
+    @Test
+    fun staleFirstLoginCannotImportIntoChangedSelectionOrCredentials() = runBlocking {
+        val profileId = insertProfile("A", 0)
+        val otherId = insertProfile("B", 1)
+        activeStore.selectProfile(profileId)
+        val context = requireNotNull(coordinator.observeActiveContext().first())
+        credentials.saveCredentials(profileId, jyuAccount())
+        coordinator.switch(otherId)
+        val courses = listOf(course(0L, 0L, false).toDomain())
+        assertTrue(coordinator.importZhengFangLogin(context, jyuAccount(), jyuSnapshot(), courses)
+            is ZhengFangLoginImportResult.Failure)
+        coordinator.switch(profileId)
+        credentials.saveCredentials(profileId, jyuAccount().copy(username = "other"))
+        assertTrue(coordinator.importZhengFangLogin(context, jyuAccount(), jyuSnapshot(), courses)
+            is ZhengFangLoginImportResult.Failure)
+        assertEquals(0, database.semesterDao().countByProfile(profileId))
+    }
+
+    @Test
+    fun credentialWriteFailureRollsBackNewSemesterAndRestoresPreviousAccount() = runBlocking {
+        val profileId = insertProfile("首次登录", 0)
+        activeStore.selectProfile(profileId)
+        val context = requireNotNull(coordinator.observeActiveContext().first())
+        val account = jyuAccount()
+        credentials.saveCredentials(profileId, account)
+        credentials.failNextSaveAfterWrite = true
+        val result = coordinator.importZhengFangLogin(context, account, jyuSnapshot(), listOf(course(0L, 0L, false).toDomain()))
+        assertTrue(result is ZhengFangLoginImportResult.Failure)
+        assertEquals(0, database.semesterDao().countByProfile(profileId))
+        assertEquals(account, credentials.getCredentials(profileId))
+        assertEquals(null, coordinator.observeActiveContext().first()?.semester)
+    }
+
+    private fun jyuAccount() = SyncCredentials(SyncProviderType.ZF, SyncCredentialType.PASSWORD,
+        "test-student", "test-password", ZhengFangWebVpn.BASE_URL)
+
+    private fun jyuSnapshot() = ZhengFangLoginSnapshot(ZhengFangAcademicTerm("2026", "3"),
+        "webvpn-token=test; route=test; JSESSIONID=test", "test-agent", 1788710400000L)
+
     private suspend fun insertProfile(name: String, order: Int): Long = database.timetableProfileDao().insert(
         TimetableProfileEntity(uuid = UUID.randomUUID().toString(), name = name, sortOrder = order),
     )
@@ -509,8 +605,12 @@ class ProfileSelectionCoordinatorInstrumentedTest {
 
     private class FakeCredentialsRepository : CredentialsRepository {
         private val saved = mutableMapOf<Long, SyncCredentials>()
+        var failNextSaveAfterWrite = false
         override suspend fun getCredentials(profileId: Long): SyncCredentials? = saved[profileId]
-        override suspend fun saveCredentials(profileId: Long, credentials: SyncCredentials) { saved[profileId] = credentials }
+        override suspend fun saveCredentials(profileId: Long, credentials: SyncCredentials) {
+            saved[profileId] = credentials
+            if (failNextSaveAfterWrite) { failNextSaveAfterWrite = false; throw IOException("test write failure") }
+        }
         override suspend fun copyCredentials(sourceProfileId: Long, targetProfileId: Long) {
             saved[sourceProfileId]?.let { saved[targetProfileId] = it }
         }

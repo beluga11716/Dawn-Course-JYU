@@ -22,6 +22,12 @@ import com.dawncourse.core.domain.model.SyncCredentials
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.TimetableProfile
 import com.dawncourse.core.domain.model.TimetableProfileSummary
+import com.dawncourse.core.domain.model.ZhengFangLoginSnapshot
+import com.dawncourse.core.domain.model.ZhengFangLoginImportResult
+import com.dawncourse.core.domain.model.ZhengFangSession
+import com.dawncourse.core.domain.model.ZhengFangSyncTarget
+import com.dawncourse.core.domain.model.SyncCredentialType
+import com.dawncourse.core.domain.model.SyncErrorCode
 import com.dawncourse.core.domain.repository.CredentialBindingMutationResult
 import com.dawncourse.core.domain.repository.CredentialBindingExpectation
 import com.dawncourse.core.domain.repository.CredentialsRepository
@@ -450,9 +456,77 @@ class ProfileSelectionCoordinator @Inject constructor(
     private suspend fun matchesCredentialExpectationLocked(profileId: Long, expected: CredentialBindingExpectation?): Boolean {
         if (expected == null) return true // 兼容其他平台原有的活动 Profile 绑定入口。
         val profile = profileDao.getProfileById(profileId) ?: return false
-        return profile.activeSemesterId == expected.semesterId &&
-            semesterDao.getSemesterById(expected.semesterId)?.profileId == profileId &&
+        val expectedSemester = expected.semesterId
+        return profile.activeSemesterId == expectedSemester &&
+            (expectedSemester == null || semesterDao.getSemesterById(expectedSemester)?.profileId == profileId) &&
             credentialsRepository.getCredentials(profileId) == expected.credentials
+    }
+
+    /** 前台识别学期后的单次提交；课程、学期和绑定在同一事务，密文失败按原值补偿。 */
+    internal suspend fun importZhengFangLogin(
+        expectedContext: ActiveTimetableContext,
+        expectedCredentials: SyncCredentials,
+        snapshot: ZhengFangLoginSnapshot,
+        courses: List<Course>,
+    ): ZhengFangLoginImportResult = withOperationalProfileMutation {
+        val profileId = expectedContext.profile.id
+        val rejected = ZhengFangLoginImportResult.Failure(SyncErrorCode.NO_CREDENTIALS,
+            "课表、学期或账号已变化，请重新打开登录与同步")
+        if (activeSelectionStore.activeProfileId.first() != profileId ||
+            !matchesCredentialExpectationLocked(profileId,
+                CredentialBindingExpectation(expectedContext.semester?.id, expectedCredentials))) {
+            return@withOperationalProfileMutation rejected
+        }
+        require(courses.isNotEmpty())
+        val semesters = semesterDao.getSemestersByProfileOnce(profileId)
+        val previousSession = expectedCredentials.zhengFangSession
+        val existing = if (snapshot.term.matches(previousSession)) {
+            semesters.firstOrNull { it.id == previousSession?.semesterId }
+        } else null
+        val namedMatches = semesters.filter { it.name == snapshot.term.name }
+        if (existing == null && namedMatches.size > 1) {
+            return@withOperationalProfileMutation ZhengFangLoginImportResult.Failure(SyncErrorCode.UNKNOWN,
+                "本地存在多个同名学期，请先在课表管理中核对，避免写入错误学期")
+        }
+        val matching = existing ?: namedMatches.singleOrNull()
+        val startDate = matching?.startDate ?: snapshot.startDate
+            ?: return@withOperationalProfileMutation ZhengFangLoginImportResult.NeedsStartDate(snapshot.term)
+        val weekCount = maxOf(matching?.weekCount ?: 20, courses.maxOf { it.endWeek })
+        validateSemesterSpec(NewSemesterSpec(snapshot.term.name, startDate, weekCount))
+        var credentialsAttempted = false
+        try {
+            database.withTransaction {
+                val profile = profileDao.getProfileById(profileId) ?: error("课表不存在")
+                val semester = matching ?: SemesterEntity(profileId = profileId, name = snapshot.term.name,
+                    startDate = startDate, weekCount = weekCount).let { it.copy(id = semesterDao.insertSemester(it)) }
+                if (semester.weekCount < weekCount) semesterDao.updateSemester(semester.copy(weekCount = weekCount))
+                val session = ZhengFangSession(snapshot.cookieHeader, snapshot.term.year, snapshot.term.code,
+                    semester.id, snapshot.userAgent, System.currentTimeMillis())
+                credentialsAttempted = true
+                credentialsRepository.saveCredentials(profileId,
+                    expectedCredentials.copy(type = SyncCredentialType.SESSION, zhengFangSession = session))
+                bindingDao.deleteBySemester(semester.id)
+                val now = System.currentTimeMillis()
+                val binding = SyncSourceBindingEntity(sourceBindingId = UUID.randomUUID().toString(),
+                    profileId = profileId, semesterId = semester.id, provider = SyncProviderType.ZF.name,
+                    createdAt = now, updatedAt = now)
+                bindingDao.insert(binding)
+                courseDao.deleteCoursesBySemester(semester.id)
+                courseDao.insertCourses(courses.map { it.copy(id = 0L, semesterId = semester.id).toEntity() })
+                profileDao.updateActiveSemesterId(profileId, semester.id)
+                ZhengFangLoginImportResult.Success(
+                    ActiveTimetableContext(profile.copy(activeSemesterId = semester.id).toDomain(),
+                        semester.copy(weekCount = weekCount).toDomain()),
+                    ZhengFangSyncTarget(profileId, semester.id, binding.sourceBindingId), courses.size)
+            }
+        } catch (failure: Throwable) {
+            if (credentialsAttempted && restoreCredentials(profileId, expectedCredentials) != null) {
+                return@withOperationalProfileMutation ZhengFangLoginImportResult.Failure(
+                    SyncErrorCode.RECOVERY_REQUIRED, "导入未完成且凭据恢复失败，请重新打开本页核对账号")
+            }
+            if (failure is CancellationException) throw failure
+            ZhengFangLoginImportResult.Failure(SyncErrorCode.UNKNOWN, "导入未完成，原学期和课程已保留，请重试")
+        }
     }
 
     /** 调用者必须已持有操作门禁与选择锁；会话捕获和设置绑定共用补偿协议。 */

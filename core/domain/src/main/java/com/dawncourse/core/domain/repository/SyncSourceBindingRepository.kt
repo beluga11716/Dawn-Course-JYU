@@ -11,7 +11,7 @@ sealed interface CredentialBindingMutationResult {
 }
 
 /** 同步页捕获的写入前置条件；须在选择锁内核验，null 凭据表示预期尚未绑定。 */
-data class CredentialBindingExpectation(val semesterId: Long, val credentials: SyncCredentials?)
+data class CredentialBindingExpectation(val semesterId: Long?, val credentials: SyncCredentials?)
 
 /** 自动更新来源绑定的领域入口，供 Feature 在不依赖 data 实现的前提下固定同步目标。 */
 interface SyncSourceBindingRepository {

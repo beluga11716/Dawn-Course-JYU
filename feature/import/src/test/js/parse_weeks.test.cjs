@@ -158,3 +158,4 @@ console.log('\nJS 解析器测试：' + passes + ' 通过，' + failures + ' 失
 if (failures > 0) {
     process.exit(1);
 }
+require('./jyu_login_metadata.test.cjs');
