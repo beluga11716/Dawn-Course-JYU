@@ -15,6 +15,11 @@ val releaseSmokeEnabled = providers.gradleProperty("dawn.releaseSmoke")
     .map { it.toBooleanStrict() }
     .orElse(false)
 
+// 二开包显式沿用已发布 APK 的本地签名，确保可覆盖升级；默认 release 仍要求原发布签名。
+val jyuDistributionEnabled = providers.gradleProperty("dawn.jyuDistribution")
+    .map { it.toBooleanStrict() }
+    .orElse(false)
+
 android {
     namespace = "com.dawncourse.app"
     compileSdk = 37
@@ -23,8 +28,8 @@ android {
         applicationId = "com.dawncourse.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 140
-        versionName = "1.0.5.3-jyu"
+        versionCode = 141
+        versionName = "1.0.5.4-jyu"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -51,9 +56,9 @@ android {
 
     buildTypes {
         release {
-            // 本地 minified 冒烟显式使用 debug 签名；普通 release 永不自动降级签名。
+            // 本地 minified 冒烟和嘉应二开发行包显式选择本地签名，普通 release 永不自动降级。
             signingConfig = signingConfigs.getByName(
-                if (releaseSmokeEnabled.get()) "debug" else "release"
+                if (releaseSmokeEnabled.get() || jyuDistributionEnabled.get()) "debug" else "release"
             )
             isMinifyEnabled = true
             isShrinkResources = true

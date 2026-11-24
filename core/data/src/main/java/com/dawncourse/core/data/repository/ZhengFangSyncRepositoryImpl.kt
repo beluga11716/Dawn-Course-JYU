@@ -49,6 +49,7 @@ class ZhengFangSyncRepositoryImpl @Inject constructor(
     private val store = context.zhengFangSyncDataStore
     private val gson = Gson()
     private val mutex = Mutex()
+    private val pendingLogin = PendingZhengFangCourses()
     private val key = stringPreferencesKey("states")
     private val stateType = object : TypeToken<List<ZhengFangSyncState>>() {}.type
 
@@ -58,20 +59,18 @@ class ZhengFangSyncRepositoryImpl @Inject constructor(
 
     override suspend fun importFromLogin(
         expectedContext: ActiveTimetableContext,
-        expectedCredentials: SyncCredentials,
+        expectedCredentials: SyncCredentials?,
         snapshot: ZhengFangLoginSnapshot,
+        confirmingStartDate: Boolean,
     ): ZhengFangLoginImportResult = mutex.withLock {
         try {
-            if (expectedCredentials.provider != SyncProviderType.ZF ||
-                !ZhengFangWebVpn.isSupportedEntry(expectedCredentials.endpointUrl)) {
-                return@withLock ZhengFangLoginImportResult.Failure(SyncErrorCode.NO_CREDENTIALS, "请先保存教务账号")
-            }
             val session = ZhengFangSession(snapshot.cookieHeader, snapshot.term.year, snapshot.term.code,
                 expectedContext.semester?.id ?: 0L, snapshot.userAgent, System.currentTimeMillis())
-            val courses = client.fetch(session)
+            val courses = pendingLogin.read(expectedContext, expectedCredentials, snapshot, confirmingStartDate) { client.fetch(session) }
             currentCoroutineContext().ensureActive()
             val previousStates = states.first()
             val result = coordinator.importZhengFangLogin(expectedContext, expectedCredentials, snapshot, courses)
+            if (result !is ZhengFangLoginImportResult.NeedsStartDate) pendingLogin.clear()
             if (result is ZhengFangLoginImportResult.Success) {
                 val previous = previousStates.firstOrNull {
                     it.target.profileId == result.target.profileId && it.target.semesterId == result.target.semesterId
@@ -79,7 +78,8 @@ class ZhengFangSyncRepositoryImpl @Inject constructor(
                 val now = System.currentTimeMillis()
                 // 课程已经提交，状态存储故障不能被误报成“未导入”并诱使用户重复创建学期。
                 try {
-                    saveState(ZhengFangSyncState(result.target, autoSyncEnabled = previous?.autoSyncEnabled == true,
+                    saveState(ZhengFangSyncState(result.target, autoSyncEnabled = previous?.autoSyncEnabled == true &&
+                        expectedCredentials?.zhengFangSession?.cookieHeader == snapshot.cookieHeader,
                         lastAttemptAt = now, lastSuccessAt = now, message = "已导入 ${result.courseCount} 条课程安排"),
                         disableOtherSemesters = true)
                 } catch (cancelled: CancellationException) {
@@ -88,12 +88,16 @@ class ZhengFangSyncRepositoryImpl @Inject constructor(
             }
             result
         } catch (cancelled: CancellationException) {
+            pendingLogin.clear()
             throw cancelled
         } catch (failure: ZhengFangSyncException) {
+            pendingLogin.clear()
             ZhengFangLoginImportResult.Failure(failure.code, failure.message.orEmpty())
         } catch (_: IOException) {
+            pendingLogin.clear()
             ZhengFangLoginImportResult.Failure(SyncErrorCode.NETWORK_ERROR, "网络或 WebVPN 暂时不可用，已保留原课表")
         } catch (_: Exception) {
+            pendingLogin.clear()
             ZhengFangLoginImportResult.Failure(SyncErrorCode.UNKNOWN, "读取课表未完成，已保留原课表，请重试")
         }
     }

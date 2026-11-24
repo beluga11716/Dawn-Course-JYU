@@ -46,7 +46,8 @@ fun DawnDatePickerDialog(
     state: DatePickerState,
     onDismissRequest: () -> Unit,
     onConfirm: () -> Unit,
-    title: String = "选择日期"
+    title: String = "选择日期",
+    confirmEnabled: Boolean = true,
 ) {
     // 强制使用简体中文配置
     val configuration = LocalConfiguration.current
@@ -62,7 +63,7 @@ fun DawnDatePickerDialog(
         DatePickerDialog(
             onDismissRequest = onDismissRequest,
             confirmButton = {
-                TextButton(onClick = onConfirm) {
+                TextButton(onClick = onConfirm, enabled = confirmEnabled) {
                     Text("确定")
                 }
             },

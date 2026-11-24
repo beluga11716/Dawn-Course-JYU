@@ -18,8 +18,10 @@ data class ZhengFangLoginSnapshot(
     val term: ZhengFangAcademicTerm,
     val cookieHeader: String,
     val userAgent: String,
-    /** 教务页面提供或用户明确确认的第一周周一；缺失时禁止猜测。 */
+    /** 教务页面提供或用户选择的开学日所在周周一；缺失时禁止猜测。 */
     val startDate: Long? = null,
+    /** 仅从已登录的同源教务页面读取；无法可靠识别时为空。 */
+    val username: String? = null,
 ) {
     override fun toString(): String = "ZhengFangLoginSnapshot(<redacted>)"
 }

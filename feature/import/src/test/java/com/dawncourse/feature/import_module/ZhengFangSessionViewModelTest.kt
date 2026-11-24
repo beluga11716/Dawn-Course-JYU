@@ -3,6 +3,8 @@ package com.dawncourse.feature.import_module
 import androidx.lifecycle.ViewModelStore
 import com.dawncourse.core.domain.model.*
 import com.dawncourse.core.domain.repository.*
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -16,7 +18,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.*
 
-/** 从首次打开同步页开始验证账号、登录和同步，仓库边界使用内存存储。 */
+/** 从首次打开同步页开始验证网页登录、日期确认和同步，仓库边界使用内存存储。 */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ZhengFangSessionViewModelTest {
     private val profile = TimetableProfile(1L, "profile", "主课表", 8L)
@@ -28,6 +30,7 @@ class ZhengFangSessionViewModelTest {
     private val store = ViewModelStore()
     private val saved = SyncCredentials(SyncProviderType.ZF, SyncCredentialType.SESSION, "20260001", "school-password",
         ZhengFangWebVpn.BASE_URL, ZhengFangSession("private-cookie", "2026", "3", 8L, "ua", 1L))
+    private val snapshot = ZhengFangLoginSnapshot(ZhengFangAcademicTerm("2026", "3"), "private-cookie", "ua")
 
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
     @After fun teardown() { store.clear(); Dispatchers.resetMain() }
@@ -35,196 +38,142 @@ class ZhengFangSessionViewModelTest {
     private fun viewModel(): ZhengFangSessionViewModel =
         ZhengFangSessionViewModel(profiles, accounts, accounts, sync).also { store.put("sync", it) }
 
-    @Test fun firstTimeUserCanSaveAndOpenLoginWithoutVisitingSettings() {
+    @Test fun firstTimeUserCanOpenWebsiteWithoutBindingCredentials() {
         val vm = viewModel()
         assertTrue(vm.initialized.value)
-        assertFalse(vm.canLogin.value)
-        vm.saveAccount("20260001", "school-password")
-        assertEquals("20260001", vm.loginAccount.value)
         assertTrue(vm.canLogin.value)
-        assertTrue(vm.loginRequested.value)
-        assertEquals(ZhengFangWebVpn.BASE_URL, accounts.saved?.endpointUrl)
-        vm.consumeLoginRequest()
-        assertFalse(vm.loginRequested.value)
+        assertNull(accounts.saved)
     }
 
-    @Test fun localSemesterArrivingAfterPageOpensEnablesAccountLogin() {
+    @Test fun localContextArrivingAfterPageOpensEnablesLogin() {
         profiles.active.value = null
         val vm = viewModel()
+        assertFalse(vm.canLogin.value)
         profiles.active.value = context
-
-        assertEquals("2026 秋", vm.semesterName.value)
-        vm.saveAccount("20260001", "school-password")
         assertTrue(vm.canLogin.value)
-        assertTrue(vm.loginRequested.value)
     }
 
-    @Test fun existingUserKeepsSessionAutoSyncAndBindingWhenOpeningLogin() {
+    @Test fun existingUserKeepsSessionAutoSyncAndBindingWhenOpeningPage() {
         accounts.saved = saved
         val state = ZhengFangSyncState(ZhengFangSyncTarget(1L, 8L, "original"), autoSyncEnabled = true)
         sync.states.value = listOf(state)
         val vm = viewModel()
-        assertEquals(state, vm.state.value)
-        vm.saveAccount("20260001", "")
         assertSame(saved, accounts.saved)
+        assertEquals(state, vm.state.value)
         assertEquals("original", accounts.binding)
-        assertEquals(state, vm.state.value)
-        assertTrue(vm.loginRequested.value)
-    }
-
-    @Test fun newAccountInvalidatesOldSessionBeforeNewLogin() {
-        accounts.saved = saved
-        sync.states.value = listOf(ZhengFangSyncState(ZhengFangSyncTarget(1L, 8L, "original"), autoSyncEnabled = true))
-        val vm = viewModel()
-        vm.saveAccount("20260002", "new-password")
-        assertEquals("20260002", accounts.saved?.username)
-        assertNull(accounts.saved?.zhengFangSession)
-        assertNull(vm.state.value)
-        assertTrue(vm.loginRequested.value)
-    }
-
-    @Test fun rejectedAccountSaveDoesNotOpenLoginOrReplaceCredentials() {
-        val vm = viewModel()
-        accounts.rejectSave = true
-        vm.saveAccount("20260001", "school-password")
-        assertNull(accounts.saved)
-        assertFalse(vm.canLogin.value)
-        assertFalse(vm.loginRequested.value)
-    }
-
-    @Test fun changedSelectionOrCredentialsRejectsStaleForm() {
-        val vm = viewModel()
-        profiles.active.value = ActiveTimetableContext(profile.copy(activeSemesterId = 9L), semester.copy(id = 9L))
-        vm.saveAccount("20260001", "school-password")
-        assertNull(accounts.saved)
-        assertFalse(vm.loginRequested.value)
-        profiles.active.value = context
-        accounts.saved = saved
-        vm.saveAccount("20260002", "other-password")
-        assertSame(saved, accounts.saved)
-        assertFalse(vm.loginRequested.value)
-    }
-
-    @Test fun missingLocalSemesterStillAllowsSavingAccountAndOpeningLogin() {
-        profiles.active.value = ActiveTimetableContext(profile.copy(activeSemesterId = null))
-        val vm = viewModel()
-        vm.saveAccount("20260001", "school-password")
-        assertEquals("20260001", accounts.saved?.username)
         assertTrue(vm.canLogin.value)
-        assertTrue(vm.loginRequested.value)
-        assertEquals("", vm.semesterName.value)
     }
 
     @Test fun firstLoginImportsDetectedTermWithoutPrecreatedSemester() {
         profiles.active.value = ActiveTimetableContext(profile.copy(activeSemesterId = null))
         val vm = viewModel()
-        vm.saveAccount("20260001", "school-password")
-        vm.importFromLogin(ZhengFangLoginSnapshot(ZhengFangAcademicTerm("2026", "3"), "private-cookie", "ua", 1L))
+        assertTrue(vm.canLogin.value)
+        vm.importFromLogin(snapshot.copy(startDate = 1L))
         assertEquals("2026-2027学年第一学期", vm.semesterName.value)
         assertEquals(8L, vm.state.value?.target?.semesterId)
-        assertNull(vm.startDateRequired.value)
-        assertTrue(vm.message.value.contains("导入"))
+        assertNull(sync.lastExpectedCredentials)
+        assertEquals("", accounts.saved?.secret)
+        assertTrue(vm.hasSession.value)
     }
 
     @Test fun missingSchoolStartDateRequestsOnlyDateAndCanFinishWithoutAccountReentry() {
         val vm = viewModel()
-        vm.saveAccount("20260001", "school-password")
         sync.needsStartDate = true
-        vm.importFromLogin(ZhengFangLoginSnapshot(ZhengFangAcademicTerm("2026", "3"), "private-cookie", "ua"))
-        assertEquals(ZhengFangAcademicTerm("2026", "3"), vm.startDateRequired.value)
-        vm.confirmImportStartDate("2026-09-08")
-        assertNotNull(vm.startDateRequired.value)
-        vm.confirmImportStartDate("2026-09-07")
+        vm.importFromLogin(snapshot)
+        assertEquals(snapshot.term, vm.startDateRequired.value)
+        vm.confirmImportStartDate("2026-09-01")
         assertNull(vm.startDateRequired.value)
         assertEquals("2026-2027学年第一学期", vm.semesterName.value)
+        val monday = LocalDate.of(2026, 8, 31).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        assertEquals(monday, sync.lastSnapshot?.startDate)
+    }
+
+    @Test fun invalidOrOutOfAcademicYearDateCannotCommit() {
+        val vm = viewModel()
+        sync.needsStartDate = true
+        vm.importFromLogin(snapshot)
+        listOf("", "2026-02-30", "2025-09-01").forEach { date ->
+            vm.confirmImportStartDate(date)
+            assertNotNull(vm.startDateRequired.value)
+            assertNull(accounts.saved)
+        }
     }
 
     @Test fun cancelledDateConfirmationDropsPendingSessionAndDoesNotImportLater() {
         val vm = viewModel()
-        vm.saveAccount("20260001", "school-password")
         sync.needsStartDate = true
-        vm.importFromLogin(ZhengFangLoginSnapshot(ZhengFangAcademicTerm("2026", "3"), "private-cookie", "ua"))
+        vm.importFromLogin(snapshot)
         vm.cancelPendingImport()
-        vm.confirmImportStartDate("2026-09-07")
-        assertNull(vm.state.value)
+        vm.confirmImportStartDate("2026-09-01")
+        assertNull(accounts.saved)
         assertNull(vm.startDateRequired.value)
     }
 
-    @Test fun selectionChangeWhileSaveIsPendingCannotRebindAnotherSemester() {
+    @Test fun failedDateConfirmationClosesCalendarAndShowsFailure() {
         val vm = viewModel()
-        accounts.beforeMutation = {
-            profiles.active.value = ActiveTimetableContext(profile.copy(activeSemesterId = 9L), semester.copy(id = 9L))
-        }
-        vm.saveAccount("20260001", "school-password")
+        sync.needsStartDate = true
+        vm.importFromLogin(snapshot)
+        sync.rejectImport = true
+        vm.confirmImportStartDate("2026-09-01")
+        assertNull(vm.startDateRequired.value)
+        assertEquals("test rejected", vm.message.value)
         assertNull(accounts.saved)
-        assertFalse(vm.loginRequested.value)
-        assertEquals("original", accounts.binding)
     }
 
-    @Test fun credentialsChangeWhileSaveIsPendingCannotBeOverwrittenByOldForm() {
+    @Test fun otherProvidersCredentialsRemainUntilSuccessfulWebImport() {
+        val other = SyncCredentials(SyncProviderType.WAKEUP, SyncCredentialType.TOKEN, secret = "token")
+        accounts.saved = other
         val vm = viewModel()
-        accounts.beforeMutation = { accounts.saved = saved }
-        vm.saveAccount("20260002", "new-password")
-        assertSame(saved, accounts.saved)
-        assertFalse(vm.loginRequested.value)
+        assertTrue(vm.canLogin.value)
+        assertSame(other, accounts.saved)
+        sync.rejectImport = true
+        vm.importFromLogin(snapshot)
+        assertSame(other, accounts.saved)
+        assertSame(other, sync.lastExpectedCredentials)
     }
 
-    @Test fun credentialsChangeWhileUnbindIsPendingCannotEraseAnotherAccount() {
+    @Test fun changedCredentialsCannotBeErasedByStaleUnbind() {
         accounts.saved = saved
         val vm = viewModel()
         val other = saved.copy(username = "20260002")
-        accounts.beforeMutation = { accounts.saved = other }
+        accounts.saved = other
         vm.clearAccount()
         assertSame(other, accounts.saved)
     }
 
-    @Test fun unbindingRemovesSavedCredentialsAndStopsPageSync() {
+    @Test fun unbindingStopsSyncAndLeavesWebLoginAvailable() {
         accounts.saved = saved
         val vm = viewModel()
         vm.clearAccount()
         assertNull(accounts.saved)
         assertNull(vm.state.value)
-        assertFalse(vm.canLogin.value)
-        assertEquals("", vm.loginAccount.value)
+        assertTrue(vm.canLogin.value)
+        assertFalse(vm.hasSession.value)
         vm.syncNow()
         assertNull(sync.lastSyncTarget)
     }
 
-    @Test fun syncAfterSetupUsesCapturedProfileSemesterAndNewBinding() {
+    @Test fun syncUsesImportedBinding() {
         val vm = viewModel()
-        vm.saveAccount("20260001", "school-password")
-        vm.saveSession("webvpn-token=a; route=b; JSESSIONID=c", "ua", "2026", "3")
+        vm.importFromLogin(snapshot.copy(startDate = 1L))
         vm.syncNow()
-        assertEquals(ZhengFangSyncTarget(1L, 8L, "captured"), sync.lastSyncTarget)
-        assertEquals("school-password", accounts.saved?.secret)
+        assertEquals(ZhengFangSyncTarget(1L, 8L, "imported"), sync.lastSyncTarget)
     }
 
-    private class Accounts(private val activeContext: () -> ActiveTimetableContext?) : CredentialsRepository, SyncSourceBindingRepository {
+    private class Accounts(private val active: () -> ActiveTimetableContext?) : CredentialsRepository, SyncSourceBindingRepository {
         var saved: SyncCredentials? = null
         var binding = "original"
-        var rejectSave = false
-        var beforeMutation: () -> Unit = {}
-        private fun matches(profileId: Long, expected: CredentialBindingExpectation?): Boolean =
-            expected != null && activeContext()?.profile?.id == profileId &&
-                activeContext()?.semester?.id == expected.semesterId && expected.credentials == saved
         override suspend fun getCredentials(profileId: Long) = saved
         override suspend fun saveCredentials(profileId: Long, credentials: SyncCredentials) { saved = credentials }
         override suspend fun copyCredentials(sourceProfileId: Long, targetProfileId: Long) = error("unused")
         override suspend fun clearCredentials(profileId: Long) { saved = null }
         override fun observeBoundProvider(profileId: Long) = flowOf(saved?.provider)
         override suspend fun ensureIfStillActive(profileId: Long, semesterId: Long, provider: SyncProviderType) = binding
-        override suspend fun saveCredentialsAndRebindIfActive(profileId: Long, credentials: SyncCredentials, expected: CredentialBindingExpectation?): CredentialBindingMutationResult {
-            beforeMutation()
-            if (rejectSave || !matches(profileId, expected)) return CredentialBindingMutationResult.Rejected("test rejected")
-            saved = credentials
-            binding = "replacement"
-            return CredentialBindingMutationResult.Success(binding)
-        }
+        override suspend fun saveCredentialsAndRebindIfActive(profileId: Long, credentials: SyncCredentials, expected: CredentialBindingExpectation?) = error("unused")
         override suspend fun clearCredentialsAndUnbindIfActive(profileId: Long, expected: CredentialBindingExpectation?): CredentialBindingMutationResult {
-            beforeMutation()
-            if (!matches(profileId, expected)) return CredentialBindingMutationResult.Rejected("test rejected")
+            if (expected == null || active()?.profile?.id != profileId || active()?.semester?.id != expected.semesterId || saved != expected.credentials)
+                return CredentialBindingMutationResult.Rejected("stale")
             saved = null
-            binding = "unbound"
             return CredentialBindingMutationResult.Success(null)
         }
     }
@@ -232,24 +181,24 @@ class ZhengFangSessionViewModelTest {
     private inner class Sync : ZhengFangSyncRepository {
         override val states = MutableStateFlow<List<ZhengFangSyncState>>(emptyList())
         var lastSyncTarget: ZhengFangSyncTarget? = null
+        var lastExpectedCredentials: SyncCredentials? = null
+        var lastSnapshot: ZhengFangLoginSnapshot? = null
         var needsStartDate = false
-        override suspend fun importFromLogin(expectedContext: ActiveTimetableContext, expectedCredentials: SyncCredentials,
-            snapshot: ZhengFangLoginSnapshot): ZhengFangLoginImportResult {
+        var rejectImport = false
+        override suspend fun importFromLogin(expectedContext: ActiveTimetableContext, expectedCredentials: SyncCredentials?,
+            snapshot: ZhengFangLoginSnapshot, confirmingStartDate: Boolean): ZhengFangLoginImportResult {
+            lastExpectedCredentials = expectedCredentials
+            lastSnapshot = snapshot
+            if (rejectImport) return ZhengFangLoginImportResult.Failure(SyncErrorCode.UNKNOWN, "test rejected")
             if (needsStartDate && snapshot.startDate == null) return ZhengFangLoginImportResult.NeedsStartDate(snapshot.term)
-            val importedSemester = semester.copy(name = snapshot.term.name)
-            val importedContext = context.copy(semester = importedSemester)
-            accounts.saved = expectedCredentials.copy(zhengFangSession = ZhengFangSession(snapshot.cookieHeader,
-                snapshot.term.year, snapshot.term.code, 8L, snapshot.userAgent, 1L))
-            val importedTarget = ZhengFangSyncTarget(1L, 8L, "imported")
-            states.value = listOf(ZhengFangSyncState(importedTarget))
-            return ZhengFangLoginImportResult.Success(importedContext, importedTarget, 5)
+            val importedContext = context.copy(semester = semester.copy(name = snapshot.term.name))
+            accounts.saved = SyncCredentials(SyncProviderType.ZF, SyncCredentialType.SESSION, snapshot.username, "",
+                ZhengFangWebVpn.BASE_URL, ZhengFangSession(snapshot.cookieHeader, snapshot.term.year, snapshot.term.code, 8L, "ua", 1L))
+            val target = ZhengFangSyncTarget(1L, 8L, "imported")
+            states.value = listOf(ZhengFangSyncState(target))
+            return ZhengFangLoginImportResult.Success(importedContext, target, 5)
         }
-        override suspend fun captureSession(target: ZhengFangSyncTarget, expectedCredentials: SyncCredentials, session: ZhengFangSession): TimetableSyncResult {
-            accounts.saved = expectedCredentials.copy(type = SyncCredentialType.SESSION, zhengFangSession = session)
-            accounts.binding = "captured"
-            states.value = listOf(ZhengFangSyncState(target.copy(sourceBindingId = "captured")))
-            return TimetableSyncResult.Success(1, "saved")
-        }
+        override suspend fun captureSession(target: ZhengFangSyncTarget, expectedCredentials: SyncCredentials, session: ZhengFangSession) = error("unused")
         override suspend fun setAutoSyncEnabled(target: ZhengFangSyncTarget, enabled: Boolean) {
             states.value = states.value.map { if (it.target == target) it.copy(autoSyncEnabled = enabled) else it }
         }

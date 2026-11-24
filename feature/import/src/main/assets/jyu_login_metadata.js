@@ -6,11 +6,15 @@
     try {
       if (win.location.origin !== origin) return null;
       const doc = win.document;
+      // 登录页可能带有隐藏学期字段，不能把它当成已登录课表。
+      if (doc.querySelector('input[type="password"]')) return null;
       const year = doc.querySelector('#xnm, select[name="xnm"], input[name="xnm"]');
       const term = doc.querySelector('#xqm, select[name="xqm"], input[name="xqm"]');
       if (year && term && /^20\d{2}$/.test(year.value) && ['3', '12', '16'].includes(term.value)) {
         const date = doc.querySelector('#xqksrq, input[name="xqksrq"], #kssj, input[name="kssj"], [data-semester-start-date]');
+        const student = doc.querySelector('#xh, input[name="xh"], [data-student-id]');
         return { year: year.value, term: term.value,
+          username: student ? (student.getAttribute('data-student-id') || student.value || student.textContent || '').trim() : '',
           startDate: date ? (date.getAttribute('data-semester-start-date') || date.value || '').trim() : '' };
       }
       if (depth < 2) {

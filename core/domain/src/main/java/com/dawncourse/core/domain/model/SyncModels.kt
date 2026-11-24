@@ -27,7 +27,7 @@ enum class SyncCredentialType {
     PASSWORD,
     /** 令牌/口令（如 WakeUp 口令、RefreshToken） */
     TOKEN,
-    /** 正方 WebVPN 会话；secret 保留原密码供前台重新登录。 */
+    /** 正方 WebVPN 会话；直接网页登录时 secret 为空，不提取网页密码。 */
     SESSION
 }
 

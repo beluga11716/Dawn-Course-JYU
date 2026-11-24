@@ -5,10 +5,11 @@ import com.dawncourse.core.domain.model.ZhengFangWebVpn
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.TemporalAdjusters
 import org.json.JSONObject
 import org.json.JSONTokener
 
-internal data class ZhengFangLoginMetadata(val term: ZhengFangAcademicTerm, val startDate: Long?) {
+internal data class ZhengFangLoginMetadata(val term: ZhengFangAcademicTerm, val startDate: Long?, val username: String?) {
     companion object {
         /** evaluateJavascript 返回 JSON 编码的字符串；空页面、错误结构均不猜测学期。 */
         fun parse(callback: String?, zone: ZoneId = ZoneId.systemDefault()): ZhengFangLoginMetadata? = runCatching {
@@ -18,9 +19,11 @@ internal data class ZhengFangLoginMetadata(val term: ZhengFangAcademicTerm, val 
             val code = json.optString("term")
             if (!ZhengFangWebVpn.validTerm(year, code)) return null
             val date = runCatching { LocalDate.parse(json.optString("startDate").replace('/', '-')) }.getOrNull()
-                ?.takeIf { it.dayOfWeek == DayOfWeek.MONDAY && it.year in year.toInt()..(year.toInt() + 1) }
+                ?.takeIf { it.year in year.toInt()..(year.toInt() + 1) }
+                ?.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
             ZhengFangLoginMetadata(ZhengFangAcademicTerm(year, code),
-                date?.atStartOfDay(zone)?.toInstant()?.toEpochMilli())
+                date?.atStartOfDay(zone)?.toInstant()?.toEpochMilli(),
+                json.optString("username").trim().takeIf { it.matches(Regex("[A-Za-z0-9_-]{4,64}")) })
         }.getOrNull()
     }
 }

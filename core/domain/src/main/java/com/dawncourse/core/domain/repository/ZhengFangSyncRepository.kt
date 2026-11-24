@@ -17,8 +17,10 @@ interface ZhengFangSyncRepository {
     /** 前台登录后识别远端学期，原子创建或复用对应学期并导入；不依赖预先建学期。 */
     suspend fun importFromLogin(
         expectedContext: ActiveTimetableContext,
-        expectedCredentials: SyncCredentials,
+        expectedCredentials: SyncCredentials?,
         snapshot: ZhengFangLoginSnapshot,
+        /** 仅同一次导入的开学日期确认可复用已验证的课程，重新登录必须重新请求。 */
+        confirmingStartDate: Boolean = false,
     ): ZhengFangLoginImportResult
 
     /** 请求验证通过后，检查捕获时的账号与 binding，再加密保存会话并轮换 binding。 */

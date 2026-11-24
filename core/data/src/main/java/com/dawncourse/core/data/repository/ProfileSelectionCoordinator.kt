@@ -24,6 +24,7 @@ import com.dawncourse.core.domain.model.TimetableProfile
 import com.dawncourse.core.domain.model.TimetableProfileSummary
 import com.dawncourse.core.domain.model.ZhengFangLoginSnapshot
 import com.dawncourse.core.domain.model.ZhengFangLoginImportResult
+import com.dawncourse.core.domain.model.ZhengFangWebVpn
 import com.dawncourse.core.domain.model.ZhengFangSession
 import com.dawncourse.core.domain.model.ZhengFangSyncTarget
 import com.dawncourse.core.domain.model.SyncCredentialType
@@ -467,7 +468,7 @@ class ProfileSelectionCoordinator @Inject constructor(
     /** 前台识别学期后的单次提交；课程、学期和绑定在同一事务，密文失败按原值补偿。 */
     internal suspend fun importZhengFangLogin(
         expectedContext: ActiveTimetableContext,
-        expectedCredentials: SyncCredentials,
+        expectedCredentials: SyncCredentials?,
         snapshot: ZhengFangLoginSnapshot,
         courses: List<Course>,
     ): ZhengFangLoginImportResult = withOperationalProfileMutation {
@@ -481,7 +482,7 @@ class ProfileSelectionCoordinator @Inject constructor(
         }
         require(courses.isNotEmpty())
         val semesters = semesterDao.getSemestersByProfileOnce(profileId)
-        val previousSession = expectedCredentials.zhengFangSession
+        val previousSession = expectedCredentials?.takeIf { it.provider == SyncProviderType.ZF }?.zhengFangSession
         val existing = if (snapshot.term.matches(previousSession)) {
             semesters.firstOrNull { it.id == previousSession?.semesterId }
         } else null
@@ -509,7 +510,9 @@ class ProfileSelectionCoordinator @Inject constructor(
                         semester.id, snapshot.userAgent, System.currentTimeMillis())
                     credentialsAttempted = true
                     credentialsRepository.saveCredentials(profileId,
-                        expectedCredentials.copy(type = SyncCredentialType.SESSION, zhengFangSession = session))
+                        SyncCredentials(provider = SyncProviderType.ZF, type = SyncCredentialType.SESSION,
+                            username = snapshot.username, secret = "", endpointUrl = ZhengFangWebVpn.BASE_URL,
+                            zhengFangSession = session))
                     bindingDao.deleteBySemester(semester.id)
                     val now = System.currentTimeMillis()
                     val binding = SyncSourceBindingEntity(sourceBindingId = UUID.randomUUID().toString(),

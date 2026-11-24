@@ -22,8 +22,13 @@ class ZhengFangLoginMetadataTest {
         assertEquals(LocalDate.of(2026, 9, 7).atStartOfDay(zone).toInstant().toEpochMilli(), result.startDate)
     }
 
-    @Test fun missingInvalidOrWrongWeekdayDateIsNeverGuessed() {
-        listOf("", "not-a-date", "2026-09-08", "2023-09-04").forEach {
+    @Test fun tuesdaySchoolStartUsesSameWeeksMonday() {
+        val result = ZhengFangLoginMetadata.parse(callback("2026", "3", "2026-09-01"), zone)!!
+        assertEquals(LocalDate.of(2026, 8, 31).atStartOfDay(zone).toInstant().toEpochMilli(), result.startDate)
+    }
+
+    @Test fun missingInvalidOrOutOfYearDateIsNeverGuessed() {
+        listOf("", "not-a-date", "2023-09-04").forEach {
             assertNull(ZhengFangLoginMetadata.parse(callback("2026", "3", it), zone)!!.startDate)
         }
     }

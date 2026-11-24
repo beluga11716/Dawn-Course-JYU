@@ -8,6 +8,11 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.dawncourse.core.data.local.AppDatabase
+import com.dawncourse.core.data.network.ZhengFangWebVpnClient
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import com.dawncourse.core.data.local.entity.CourseEntity
 import com.dawncourse.core.data.local.entity.toDomain
 import com.dawncourse.core.data.local.entity.SemesterEntity
@@ -490,16 +495,86 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         val profileId = insertProfile("首次登录", 0)
         activeStore.selectProfile(profileId)
         val context = requireNotNull(coordinator.observeActiveContext().first())
-        val account = jyuAccount()
-        assertTrue(coordinator.saveCredentialsAndRebindIfActive(profileId, account,
-            CredentialBindingExpectation(null, null)) is CredentialBindingMutationResult.Success)
-        val result = coordinator.importZhengFangLogin(context, account, jyuSnapshot(), listOf(course(0L, 0L, false).toDomain()))
+        val result = coordinator.importZhengFangLogin(context, null, jyuSnapshot(), listOf(course(0L, 0L, false).toDomain()))
         assertTrue(result is ZhengFangLoginImportResult.Success)
         result as ZhengFangLoginImportResult.Success
         assertEquals("2026-2027学年第一学期", result.context.semester?.name)
         assertEquals(result.target.semesterId, credentials.getCredentials(profileId)?.zhengFangSession?.semesterId)
         assertEquals(1, database.courseDao().getCoursesBySemesterOnce(result.target.semesterId).size)
         assertEquals(result.target.semesterId, coordinator.observeActiveContext().first()?.semester?.id)
+        assertEquals("", credentials.getCredentials(profileId)?.secret)
+        assertEquals(SyncProviderType.ZF, credentials.getCredentials(profileId)?.provider)
+    }
+
+    @Test
+    fun dateConfirmationUsesOneHttpFetchAndRechecksCredentialsBeforeCommit() = runBlocking {
+        val profileId = insertProfile("网页直接登录", 0)
+        activeStore.selectProfile(profileId)
+        val context = requireNotNull(coordinator.observeActiveContext().first())
+        var requests = 0
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            requests++
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body("""{"kbList":[{"kcmc":"测试课程","xqj":"1","jcs":"1-2节","zcd":"1-16周"}]}""".toResponseBody()).build()
+        }.build()
+        val repository = ZhengFangSyncRepositoryImpl(ApplicationProvider.getApplicationContext(), credentials,
+            coordinator, ZhengFangWebVpnClient(http))
+        val snapshot = jyuSnapshot().copy(startDate = null)
+        assertTrue(repository.importFromLogin(context, null, snapshot) is ZhengFangLoginImportResult.NeedsStartDate)
+        assertEquals(1, requests)
+        assertEquals(0, database.semesterDao().countByProfile(profileId))
+        val changed = jyuAccount().copy(username = "new-account")
+        credentials.saveCredentials(profileId, changed)
+        assertTrue(repository.importFromLogin(context, null, snapshot.copy(startDate = 1788105600000L), confirmingStartDate = true)
+            is ZhengFangLoginImportResult.Failure)
+        assertEquals(1, requests)
+        assertEquals(changed, credentials.getCredentials(profileId))
+        assertEquals(0, database.semesterDao().countByProfile(profileId))
+        credentials.clearCredentials(profileId)
+        assertTrue(repository.importFromLogin(context, null, snapshot) is ZhengFangLoginImportResult.NeedsStartDate)
+        val imported = repository.importFromLogin(context, null, snapshot.copy(startDate = 1788105600000L),
+            confirmingStartDate = true)
+        assertTrue(imported is ZhengFangLoginImportResult.Success)
+        assertEquals(2, requests)
+        assertEquals("", credentials.getCredentials(profileId)?.secret)
+        val target = (imported as ZhengFangLoginImportResult.Success).target
+        repository.setAutoSyncEnabled(target, true)
+        assertTrue(repository.sync(target, automatic = true) is com.dawncourse.core.domain.model.TimetableSyncResult.Success)
+        assertEquals(3, requests)
+    }
+
+    @Test
+    fun directWebLoginCanReplaceOtherProviderOnlyAfterSuccessfulImport() = runBlocking {
+        val profileId = insertProfile("已有其他来源", 0)
+        activeStore.selectProfile(profileId)
+        val context = requireNotNull(coordinator.observeActiveContext().first())
+        val other = SyncCredentials(SyncProviderType.WAKEUP, SyncCredentialType.TOKEN, secret = "test-token")
+        credentials.saveCredentials(profileId, other)
+        val courses = listOf(course(0L, 0L, false).toDomain())
+        assertTrue(coordinator.importZhengFangLogin(context, other, jyuSnapshot().copy(startDate = null), courses)
+            is ZhengFangLoginImportResult.NeedsStartDate)
+        assertEquals(other, credentials.getCredentials(profileId))
+        credentials.failNextSaveAfterWrite = true
+        assertTrue(coordinator.importZhengFangLogin(context, other, jyuSnapshot(), courses)
+            is ZhengFangLoginImportResult.Failure)
+        assertEquals(other, credentials.getCredentials(profileId))
+        assertTrue(coordinator.importZhengFangLogin(context, other, jyuSnapshot(), courses)
+            is ZhengFangLoginImportResult.Success)
+        assertEquals(SyncProviderType.ZF, credentials.getCredentials(profileId)?.provider)
+        assertEquals("", credentials.getCredentials(profileId)?.secret)
+    }
+
+    @Test
+    fun failedFirstWebImportRestoresNoCredentialsAndNoSemester() = runBlocking {
+        val profileId = insertProfile("尚未绑定", 0)
+        activeStore.selectProfile(profileId)
+        val context = requireNotNull(coordinator.observeActiveContext().first())
+        credentials.failNextSaveAfterWrite = true
+        val result = coordinator.importZhengFangLogin(context, null, jyuSnapshot(), listOf(course(0L, 0L, false).toDomain()))
+        assertTrue(result is ZhengFangLoginImportResult.Failure)
+        assertEquals(null, credentials.getCredentials(profileId))
+        assertEquals(0, database.semesterDao().countByProfile(profileId))
+        assertEquals(null, coordinator.observeActiveContext().first()?.semester)
     }
 
     @Test

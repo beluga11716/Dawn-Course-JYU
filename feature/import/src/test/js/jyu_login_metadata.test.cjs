@@ -20,11 +20,11 @@ function page({ year = '', term = '', date = '', password = false, frames = [], 
 }
 function read(win) { return JSON.parse(vm.runInNewContext(script, { window: win, location: win.location, URL })); }
 assert.deepEqual(read(page()), {});
-assert.deepEqual(read(page({ year: '2025', term: '12' })), { year: '2025', term: '12', startDate: '' });
-assert.deepEqual(read(page({ year: '2026', term: '3', date: '2026-09-07' })), { year: '2026', term: '3', startDate: '2026-09-07' });
+assert.deepEqual(read(page({ year: '2025', term: '12' })), { year: '2025', term: '12', username: '', startDate: '' });
+assert.deepEqual(read(page({ year: '2026', term: '3', date: '2026-09-07' })), { year: '2026', term: '3', username: '', startDate: '2026-09-07' });
 assert.deepEqual(read(page({ year: '2026', term: '1' })), {});
 assert.deepEqual(read(page({ year: '2026', term: '3', site: 'https://webvpn.jyu.cn' })), {});
-assert.deepEqual(read(page({ frames: [page({ year: '2025', term: '12' })] })), { year: '2025', term: '12', startDate: '' });
+assert.deepEqual(read(page({ frames: [page({ year: '2025', term: '12' })] })), { year: '2025', term: '12', username: '', startDate: '' });
 assert.deepEqual(read(page({ frames: [page({ year: '2025', term: '12', site: 'https://example.com' })] })), {});
 let clicks = 0;
 const link = href => ({ getAttribute(name) { return name === 'href' ? href : ''; }, click() { clicks++; } });
@@ -33,4 +33,5 @@ read(home); read(home);
 assert.equal(clicks, 1);
 read(page({ password: true, links: [link('/kbcx/xskbcx_cxXskbcxIndex.html')] }));
 assert.equal(clicks, 1);
-console.log('嘉应教务学期读取与导航：9 项断言通过');
+assert.deepEqual(read(page({ year: '2026', term: '3', password: true })), {});
+console.log('嘉应教务学期读取与导航：10 项断言通过');
