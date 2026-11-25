@@ -41,7 +41,7 @@ jdom = "2.0.6.1"
 guava = "33.6.0-android"
 gson = "2.13.2"
 jsoup = "1.23.1"
-palette = "1.0.0"
+palette = "1.1.0"
 material-color-utilities = "3.0.1"
 
 # 库依赖定义 (Libraries)
