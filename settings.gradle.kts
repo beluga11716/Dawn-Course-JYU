@@ -42,8 +42,8 @@ buildscript {
             // 旧插件可能仍依赖 jdk15on
             force("org.bouncycastle:bcprov-jdk15on:1.70")
             force("org.bouncycastle:bcpkix-jdk15on:1.70")
-            force("org.bouncycastle:bcprov-jdk18on:1.83")
-            force("org.bouncycastle:bcpkix-jdk18on:1.83")
+            force("org.bouncycastle:bcprov-jdk18on:1.87")
+            force("org.bouncycastle:bcpkix-jdk18on:1.87")
             
             // 强制 Apache Commons IO (>= 2.18.0)
             force("commons-io:commons-io:2.22.0")
