@@ -10,10 +10,8 @@ import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -33,20 +31,6 @@ import com.dawncourse.core.domain.model.AppSettings
 import androidx.palette.graphics.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
-// 深色模式配色方案
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
-
-// 浅色模式配色方案
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-)
 
 val LocalAppSettings = staticCompositionLocalOf { AppSettings() }
 // 壁纸动态取色的对比色（用于主页面顶栏等需要与背景形成对比的图标/文字）
@@ -92,7 +76,9 @@ fun DawnTheme(
     }
 
     // 内置回退配色
-    val fallbackScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val fallbackScheme = remember(appSettings.themeColor, darkTheme) {
+        seedColorScheme(Color(appSettings.themeColor.argb), darkTheme)
+    }
 
     // 系统动态取色（Material You）
     //
@@ -146,11 +132,11 @@ fun DawnTheme(
 }
 
 /**
- * 从壁纸提取主色并生成简化主题色，同时计算顶栏对比色
+ * 从壁纸提取主色并生成完整主题色，同时计算顶栏对比色
  *
  * 设计原则：
- * 1. 主色取自壁纸主色，但降低饱和度，避免视觉过于花哨
- * 2. 亮度范围根据深浅主题限制，确保整体可读性
+ * 1. 主色取自壁纸主色，通过 Material 色阶统一控制饱和度
+ * 2. 为深浅模式分别生成背景、容器和对应前景色，保证对比度
  * 3. 对比色从固定 6 色中选择与背景对比最强的颜色
  */
 private suspend fun generateColorSchemeFromWallpaper(
@@ -164,23 +150,7 @@ private suspend fun generateColorSchemeFromWallpaper(
     val palette = Palette.from(bitmap).maximumColorCount(8).generate()
     val dominant = palette.getDominantColor(0)
     if (dominant == 0) return null
-    // HSL 调整：降低饱和度并限定亮度区间，避免过亮或过暗
-    val hsl = FloatArray(3)
-    ColorUtils.colorToHSL(dominant, hsl)
-    val saturation = hsl[1].coerceAtMost(0.35f)
-    val lightness = if (darkTheme) {
-        hsl[2].coerceIn(0.30f, 0.60f)
-    } else {
-        hsl[2].coerceIn(0.45f, 0.80f)
-    }
-    val primary = Color(ColorUtils.HSLToColor(floatArrayOf(hsl[0], saturation, lightness)))
-    val secondary = Color(ColorUtils.HSLToColor(floatArrayOf((hsl[0] + 20f) % 360f, saturation * 0.7f, lightness)))
-    val tertiary = Color(ColorUtils.HSLToColor(floatArrayOf((hsl[0] + 40f) % 360f, saturation * 0.5f, lightness)))
-    val scheme = if (darkTheme) {
-        darkColorScheme(primary = primary, secondary = secondary, tertiary = tertiary)
-    } else {
-        lightColorScheme(primary = primary, secondary = secondary, tertiary = tertiary)
-    }
+    val scheme = withContext(Dispatchers.Default) { seedColorScheme(Color(dominant), darkTheme) }
     // 对比色：从固定 6 色中挑选与壁纸主色对比最强的颜色
     val contrastColor = pickBestContrastColor(dominant)
     return scheme to contrastColor

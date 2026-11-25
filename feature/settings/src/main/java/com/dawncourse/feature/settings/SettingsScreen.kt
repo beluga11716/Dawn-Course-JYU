@@ -33,6 +33,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -136,6 +137,15 @@ fun SettingsScreen(
     var showWebDavSheet by remember { mutableStateOf(false) }
     // 本地备份弹窗显示状态
     var showLocalBackupSheet by remember { mutableStateOf(false) }
+    var category by rememberSaveable { mutableStateOf<SettingsCategory?>(null) }
+    val navigateBack: () -> Unit = {
+        when (category) {
+            SettingsCategory.THEME_COLOR -> category = SettingsCategory.APPEARANCE
+            null -> onBackClick()
+            else -> category = null
+        }
+    }
+    BackHandler(enabled = category != null) { navigateBack() }
     
     val calendarExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/calendar")
@@ -255,9 +265,9 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("设置") },
+                title = { Text(category?.title ?: "设置") },
                 navigationIcon = {
-                    IconButton(onClick = onBackClick) {
+                    IconButton(onClick = navigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
@@ -271,109 +281,136 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(rememberSaveable(category, saver = androidx.compose.foundation.ScrollState.Saver) {
+                    androidx.compose.foundation.ScrollState(0)
+                })
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            DataSyncSection(
-                boundProvider = boundProvider,
-                lastSyncDesc = lastSyncDesc,
-                onOpenZhengFangSync = onOpenZhengFangSync,
-                onOpenSystemCalendarSync = onOpenSystemCalendarSync,
-                onOpenOtherPlatformSync = onOpenOtherPlatformSync,
-                onShowDialog = { dialogState = it },
-                onOpenWebDav = {
-                    showWebDavSheet = true
-                    viewModel.refreshWebDavRemoteInfo()
-                },
-                onOpenLocalBackup = {
-                    showLocalBackupSheet = true
-                    // 每次打开重置提示与进度，避免旧状态残留
-                    viewModel.resetLocalBackupState()
-                },
-                onExportCalendar = {
-                    val semester = currentSemester
-                    if (semester == null) {
-                        Toast.makeText(context, "当前未选择学期，无法导出日历", Toast.LENGTH_SHORT).show()
-                    } else {
-                        try {
-                            val fileName = "DawnCourse_${semester.name}.ics"
-                            calendarExportLauncher.launch(fileName)
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+            if (category == null) {
+                SettingsCategory.entries.filter { it != SettingsCategory.THEME_COLOR }.forEach { item ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                        SettingRow(
+                            title = item.title,
+                            description = item.description,
+                            icon = { Icon(item.icon, contentDescription = null) },
+                            showArrow = true,
+                            onClick = {
+                                if (item == SettingsCategory.WIDGET) onOpenWidgetSettings() else category = item
+                            },
+                        )
+                    }
+                }
+            }
+            if (category == SettingsCategory.THEME_COLOR) {
+                ThemeColorPicker(settings = settings, onSelect = viewModel::setThemeColor, onDynamicColorChange = viewModel::setDynamicColor)
+            }
+            if (category == SettingsCategory.DATA_SYNC) {
+                DataSyncSection(
+                    boundProvider = boundProvider,
+                    lastSyncDesc = lastSyncDesc,
+                    onOpenZhengFangSync = onOpenZhengFangSync,
+                    onOpenSystemCalendarSync = onOpenSystemCalendarSync,
+                    onOpenOtherPlatformSync = onOpenOtherPlatformSync,
+                    onShowDialog = { dialogState = it },
+                    onOpenWebDav = {
+                        showWebDavSheet = true
+                        viewModel.refreshWebDavRemoteInfo()
+                    },
+                    onOpenLocalBackup = {
+                        showLocalBackupSheet = true
+                        // 每次打开重置提示与进度，避免旧状态残留
+                        viewModel.resetLocalBackupState()
+                    },
+                    onExportCalendar = {
+                        val semester = currentSemester
+                        if (semester == null) {
+                            Toast.makeText(context, "当前未选择学期，无法导出日历", Toast.LENGTH_SHORT).show()
+                        } else {
+                            try {
+                                val fileName = "DawnCourse_${semester.name}.ics"
+                                calendarExportLauncher.launch(fileName)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
-                }
-            )
+                )
+            }
 
-            SettingRow(
-                icon = { Icon(Icons.Default.Widgets, contentDescription = null) },
-                title = "桌面小组件",
-                description = "添加到桌面、背景透明度与文字颜色",
-                showArrow = true,
-                onClick = onOpenWidgetSettings,
-            )
-
-            TimetableSection(
-                settings = settings,
-                currentSemester = currentSemester,
-                activeTimetableContext = activeTimetableContext,
-                viewModel = viewModel,
-                onOpenProfileManager = onOpenProfileManager,
-                onOpenSemester = openSemesterDialog,
-                onOpenSectionTime = { dialogState = SettingsDialogState.SectionTime },
-                onOpenBatchUpdate = { dialogState = SettingsDialogState.BatchUpdateDuration }
-            )
-            AppearanceSection(
-                settings = settings,
-                viewModel = viewModel,
-                onPickWallpaper = {
-                    try {
-                        wallpaperLauncher.launch(arrayOf("image/*"))
-                    } catch (e: Exception) {
-                        Toast.makeText(context, "无法打开图片选择器", Toast.LENGTH_SHORT).show()
+            if (category == SettingsCategory.TIMETABLE) {
+                TimetableSection(
+                    settings = settings,
+                    currentSemester = currentSemester,
+                    activeTimetableContext = activeTimetableContext,
+                    viewModel = viewModel,
+                    onOpenProfileManager = onOpenProfileManager,
+                    onOpenSemester = openSemesterDialog,
+                    onOpenSectionTime = { dialogState = SettingsDialogState.SectionTime },
+                    onOpenBatchUpdate = { dialogState = SettingsDialogState.BatchUpdateDuration }
+                )
+            }
+            if (category == SettingsCategory.APPEARANCE) {
+                AppearanceSection(
+                    settings = settings,
+                    viewModel = viewModel,
+                    onOpenThemeColor = { category = SettingsCategory.THEME_COLOR },
+                    onPickWallpaper = {
+                        try {
+                            wallpaperLauncher.launch(arrayOf("image/*"))
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "无法打开图片选择器", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                }
-            )
-            LayoutSection(settings = settings, viewModel = viewModel)
-            GridLineSection(settings = settings, viewModel = viewModel)
-            NotificationSection(
-                settings = settings,
-                context = context,
-                viewModel = viewModel,
-                onRequestNotificationPermission = { onGranted ->
-                    checkAndRequestNotificationPermission(onGranted)
-                },
-                onRequestAutoMutePermission = { dialogState = SettingsDialogState.Permission }
-            )
+                )
+            }
+            if (category == SettingsCategory.LAYOUT) {
+                LayoutSection(settings = settings, viewModel = viewModel)
+            }
+            if (category == SettingsCategory.GRID) {
+                GridLineSection(settings = settings, viewModel = viewModel)
+            }
+            if (category == SettingsCategory.NOTIFICATIONS) {
+                NotificationSection(
+                    settings = settings,
+                    context = context,
+                    viewModel = viewModel,
+                    onRequestNotificationPermission = { onGranted ->
+                        checkAndRequestNotificationPermission(onGranted)
+                    },
+                    onRequestAutoMutePermission = { dialogState = SettingsDialogState.Permission }
+                )
+            }
 
-            AboutSection(
-                context = context,
-                onCheckUpdate = onCheckUpdate
-            )
+            if (category == SettingsCategory.ABOUT) {
+                AboutSection(
+                    context = context,
+                    onCheckUpdate = onCheckUpdate
+                )
 
-            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            val versionName = remember { packageInfo.versionName ?: "" } // compileSdk 37 起 versionName 为可空
+                val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                val versionName = remember { packageInfo.versionName ?: "" } // compileSdk 37 起 versionName 为可空
 
-            AboutBrandFooter(
-                versionName = versionName,
-                onRepoClick = {
-                    try {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/Dawn-Course"))
-                        context.startActivity(intent)
-                    } catch (e: Exception) {
-                        Toast.makeText(context, "无法打开链接", Toast.LENGTH_SHORT).show()
+                AboutBrandFooter(
+                    versionName = versionName,
+                    onRepoClick = {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/Dawn-Course"))
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "无法打开链接", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onLicenseClick = {
+                         try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/Dawn-Course/blob/main/LICENSE"))
+                            context.startActivity(intent)
+                         } catch (e: Exception) {
+                            Toast.makeText(context, "无法打开链接", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                },
-                onLicenseClick = {
-                     try {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/Dawn-Course/blob/main/LICENSE"))
-                        context.startActivity(intent)
-                     } catch (e: Exception) {
-                        Toast.makeText(context, "无法打开链接", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            )
+                )
+            }
         }
     }
     SettingsDialogManager(
@@ -594,6 +631,7 @@ private fun AdvancedCourseCardPreview(settings: AppSettings) {
 private fun AppearanceSection(
     settings: AppSettings,
     viewModel: SettingsViewModel,
+    onOpenThemeColor: () -> Unit,
     onPickWallpaper: () -> Unit
 ) {
     var showAppearanceAdvanced by remember { mutableStateOf(false) }
@@ -628,12 +666,12 @@ private fun AppearanceSection(
             }
         }
         HorizontalDivider(modifier = Modifier.padding(start = 56.dp, end = 16.dp))
-        SwitchSetting(
-            title = "动态取色 (Material You)",
-            description = "根据壁纸自动生成主题色",
+        SettingRow(
+            title = "主题颜色",
+            description = if (settings.dynamicColor) "动态取色 · 根据壁纸生成" else settings.themeColor.displayName,
             icon = { Icon(Icons.Default.Palette, null) },
-            checked = settings.dynamicColor,
-            onCheckedChange = { viewModel.setDynamicColor(it) },
+            onClick = onOpenThemeColor,
+            showArrow = true,
             showDivider = true
         )
         SettingRow(

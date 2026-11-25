@@ -34,6 +34,7 @@ dependencies {
     implementation(libs.material3)
     implementation(libs.material.icons.extended)
     implementation(libs.palette.ktx)
+    implementation(libs.material.color.utilities)
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.hilt.android)
     implementation(libs.hilt.lifecycle.viewmodel.compose)
@@ -41,4 +42,5 @@ dependencies {
 
     debugImplementation(libs.ui.tooling)
     debugImplementation(libs.ui.test.manifest)
+    testImplementation(libs.junit)
 }

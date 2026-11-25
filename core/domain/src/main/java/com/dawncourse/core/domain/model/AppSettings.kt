@@ -50,7 +50,8 @@ enum class AppFontStyle {
  * @property backgroundBrightness 背景亮度 (0.0-1.0)
  */
 data class AppSettings(
-    val dynamicColor: Boolean = true,
+    val dynamicColor: Boolean = false,
+    val themeColor: ThemeColor = ThemeColor.DEFAULT_GREEN,
     val wallpaperUri: String? = null,
     /** 背景透明度 (0.0 - 1.0)，0 表示不透明，1 表示全透明 */
     val transparency: Float = 0f,

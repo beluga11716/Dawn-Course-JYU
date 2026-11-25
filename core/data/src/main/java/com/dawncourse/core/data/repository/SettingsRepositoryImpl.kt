@@ -62,6 +62,7 @@ class SettingsRepositoryImpl @Inject constructor(
     private object PreferencesKeys {
         /** 是否启用动态取色 */
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+        val THEME_COLOR = stringPreferencesKey("theme_color")
         /** 壁纸 URI */
         val WALLPAPER_URI = stringPreferencesKey("wallpaper_uri")
         /** 背景透明度 */
@@ -161,7 +162,8 @@ class SettingsRepositoryImpl @Inject constructor(
         .catch { emit(emptyPreferences()) }
         .map { preferences ->
         // 基础设置读取与默认值兜底
-        val dynamicColor = preferences[PreferencesKeys.DYNAMIC_COLOR] ?: true
+        val dynamicColor = preferences[PreferencesKeys.DYNAMIC_COLOR] ?: false
+        val themeColor = com.dawncourse.core.domain.model.ThemeColor.fromStoredName(preferences[PreferencesKeys.THEME_COLOR])
         val wallpaperUri = preferences[PreferencesKeys.WALLPAPER_URI]
         val transparency = preferences[PreferencesKeys.TRANSPARENCY] ?: 0f
         val fontStyleName = preferences[PreferencesKeys.FONT_STYLE] ?: AppFontStyle.SYSTEM.name
@@ -238,6 +240,7 @@ class SettingsRepositoryImpl @Inject constructor(
         // 组合为 AppSettings 返回
         AppSettings(
             dynamicColor = dynamicColor,
+            themeColor = themeColor,
             wallpaperUri = wallpaperUri,
             transparency = transparency,
             fontStyle = fontStyle,
@@ -282,6 +285,13 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun setDynamicColor(enabled: Boolean) {
         dataStore.edit { preferences ->
             preferences[PreferencesKeys.DYNAMIC_COLOR] = enabled
+        }
+    }
+
+    override suspend fun setThemeColor(color: com.dawncourse.core.domain.model.ThemeColor) {
+        dataStore.edit {
+            it[PreferencesKeys.THEME_COLOR] = color.name
+            it[PreferencesKeys.DYNAMIC_COLOR] = false
         }
     }
 
@@ -622,6 +632,7 @@ class SettingsRepositoryImpl @Inject constructor(
     /** 将完整设置写入当前 MutablePreferences；调用方决定是否保留或覆盖选择键。 */
     private fun MutablePreferences.writeAllSettings(settings: AppSettings) {
         this[PreferencesKeys.DYNAMIC_COLOR] = settings.dynamicColor
+        this[PreferencesKeys.THEME_COLOR] = settings.themeColor.name
         settings.wallpaperUri?.let { this[PreferencesKeys.WALLPAPER_URI] = it }
             ?: remove(PreferencesKeys.WALLPAPER_URI)
         this[PreferencesKeys.TRANSPARENCY] = settings.transparency

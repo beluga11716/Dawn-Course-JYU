@@ -49,6 +49,9 @@ interface SettingsRepository {
      * @param enabled 是否启用
      */
     suspend fun setDynamicColor(enabled: Boolean)
+
+    /** 原子保存手动主题色并关闭动态取色。 */
+    suspend fun setThemeColor(color: com.dawncourse.core.domain.model.ThemeColor)
     
     /**
      * 设置自定义壁纸 URI

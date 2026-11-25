@@ -84,7 +84,8 @@ class SettingsViewModel @Inject constructor(
     private val readLocalBackupPreviewUseCase: ReadLocalBackupPreviewUseCase,
     private val widgetUpdateRepository: WidgetUpdateRepository,
     private val generateIcsUseCase: GenerateIcsUseCase,
-    private val calendarExportRepository: CalendarExportRepository
+    private val calendarExportRepository: CalendarExportRepository,
+    private val updateThemeColor: com.dawncourse.core.domain.usecase.UpdateThemeColorUseCase,
 ) : ViewModel() {
 
     private val _credentialBindingEvents = MutableSharedFlow<CredentialBindingUiEvent>(extraBufferCapacity = 1)
@@ -372,6 +373,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.setDynamicColor(enabled)
         }
+    }
+
+    fun setThemeColor(color: com.dawncourse.core.domain.model.ThemeColor) {
+        viewModelScope.launch { updateThemeColor(color) }
     }
 
     /**
