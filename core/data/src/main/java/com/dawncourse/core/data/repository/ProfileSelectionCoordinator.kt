@@ -100,6 +100,15 @@ class ProfileSelectionCoordinator @Inject constructor(
         block(success(profile, validSemester(profile)).activeContext)
     }
 
+    /** 后台副作用按固定 Profile 解析其当前学期，不改变 UI 选择。 */
+    internal suspend fun <T> withResolvedProfileContext(
+        profileId: Long,
+        block: suspend (ActiveTimetableContext?) -> T,
+    ): T = withOperationalProfileMutation {
+        val profile = profileDao.getProfileById(profileId)
+        block(profile?.let { success(it, validSemester(it)).activeContext })
+    }
+
     /** 首次仅从遗留学期键桥接；之后无效 ID 稳定回退到排序第一项。 */
     fun observeActiveContext(): Flow<ActiveTimetableContext?> = flow {
         withOperationalProfileMutation {

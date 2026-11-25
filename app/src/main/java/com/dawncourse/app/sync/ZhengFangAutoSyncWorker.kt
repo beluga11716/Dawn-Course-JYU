@@ -28,6 +28,7 @@ import com.dawncourse.core.domain.model.ZhengFangSyncTarget
 import com.dawncourse.core.domain.repository.OperationalDataGate
 import com.dawncourse.core.domain.repository.OperationalDataReadiness
 import com.dawncourse.core.domain.repository.ZhengFangSyncRepository
+import com.dawncourse.core.domain.repository.SystemCalendarSyncRepository
 import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -43,6 +44,7 @@ class ZhengFangAutoSyncWorker @AssistedInject constructor(
     @Assisted parameters: WorkerParameters,
     private val dataGate: OperationalDataGate,
     private val repository: Lazy<ZhengFangSyncRepository>,
+    private val calendarRepository: Lazy<SystemCalendarSyncRepository>,
 ) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result = try {
         syncCapturedTarget()
@@ -67,6 +69,7 @@ class ZhengFangAutoSyncWorker @AssistedInject constructor(
         val repo = repository.get()
         return when (val result = repo.sync(target, automatic = true)) {
             is TimetableSyncResult.Success -> {
+                calendarRepository.get().refreshEnabled()
                 ZhengFangSyncNotification.cancel(applicationContext, target)
                 Result.success()
             }

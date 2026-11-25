@@ -7,6 +7,7 @@ import androidx.startup.AppInitializer
 import androidx.work.Configuration
 import com.dawncourse.app.crash.CrashReporter
 import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
+import com.dawncourse.core.data.calendar.SystemCalendarSyncRuntime
 import com.dawncourse.feature.widget.startup.WidgetSyncInitializer
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -28,6 +29,9 @@ class DawnApp : Application(), Configuration.Provider {
     /** 主进程唯一数据库启动 Runtime；隔离脚本进程不会启动它。 */
     @Inject
     lateinit var databaseStartupRuntime: DatabaseStartupRuntime
+
+    @Inject
+    lateinit var calendarSyncRuntime: SystemCalendarSyncRuntime
 
     /** WorkManager 延迟初始化时读取的应用级配置。 */
     override val workManagerConfiguration: Configuration
@@ -57,6 +61,7 @@ class DawnApp : Application(), Configuration.Provider {
             if (ApplicationProcessPolicy.shouldInitializeSystemSurfaces(packageName, processName)) {
                 // 提交 IO 初始化后立即返回，让 Activity splash/恢复页保持可响应。
                 databaseStartupRuntime.start()
+                calendarSyncRuntime.start()
                 // 主进程先恢复 Widget 的 WorkManager 状态，再允许 benchmark Provider 清理和播种。
                 AppInitializer.getInstance(this)
                     .initializeComponent(WidgetSyncInitializer::class.java)

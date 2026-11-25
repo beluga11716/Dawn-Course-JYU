@@ -119,6 +119,62 @@ class ProfileSelectionCoordinatorInstrumentedTest {
     }
 
     @Test
+    fun calendarRefreshUpdatesInactiveEnabledProfileWithoutChangingSelectionOrEnablingOthers() = runBlocking {
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        listOf(android.Manifest.permission.READ_CALENDAR, android.Manifest.permission.WRITE_CALENDAR).forEach { permission ->
+            instrumentation.uiAutomation.executeShellCommand("pm grant ${context.packageName} $permission").use { descriptor ->
+                java.io.FileInputStream(descriptor.fileDescriptor).use { it.readBytes() }
+            }
+        }
+        val first = insertProfile("日历 A", 0)
+        val second = insertProfile("日历 B", 1)
+        val disabled = insertProfile("未开启日历", 2)
+        val semester = insertSemester(first)
+        database.timetableProfileDao().updateActiveSemesterId(first, semester)
+        database.courseDao().insertCourse(course(semester, 0L, false).copy(location = "新教室"))
+        activeStore.selectProfile(second)
+        val firstUuid = database.timetableProfileDao().getProfileById(first)!!.uuid
+        val secondUuid = database.timetableProfileDao().getProfileById(second)!!.uuid
+        val disabledUuid = database.timetableProfileDao().getProfileById(disabled)!!.uuid
+        val store = com.dawncourse.core.data.calendar.CalendarProviderStore(context)
+        val calendarId = store.ensureCalendar(firstUuid, "日历 A").id
+        try {
+            store.reconcile(firstUuid, emptyList(), 10, "日历 A")
+            val gate = object : com.dawncourse.core.domain.repository.OperationalDataGate {
+                override fun readiness() = com.dawncourse.core.domain.repository.OperationalDataReadiness.READY
+                override suspend fun awaitReadiness(timeoutMillis: Long) = readiness()
+            }
+            lateinit var repository: SystemCalendarSyncRepositoryImpl
+            val runtime = com.dawncourse.core.data.calendar.SystemCalendarSyncRuntime(context, gate, javax.inject.Provider { repository })
+            val settings = object : com.dawncourse.core.domain.repository.SettingsRepository by SettingsRepositoryImpl(context) {
+                override val settings = flowOf(com.dawncourse.core.domain.model.AppSettings(sectionTimes = listOf(
+                    com.dawncourse.core.domain.model.SectionTime("08:00", "08:45"),
+                    com.dawncourse.core.domain.model.SectionTime("08:55", "09:40"),
+                )))
+            }
+            repository = SystemCalendarSyncRepositoryImpl(coordinator, database.courseDao(), settings, store,
+                com.dawncourse.core.domain.usecase.GenerateCalendarOccurrencesUseCase(), runtime)
+            val refreshed = repository.refreshEnabled()
+            assertTrue(refreshed.message, refreshed.success)
+            assertEquals(16, store.eventCount(firstUuid))
+            database.courseDao().deleteCoursesBySemester(semester)
+            val cleared = repository.refreshEnabled()
+            assertTrue(cleared.message, cleared.success)
+            assertEquals(0, store.eventCount(firstUuid))
+            assertEquals(second, activeStore.activeProfileId.first())
+            assertEquals(null, store.find(secondUuid))
+            assertEquals(null, store.find(disabledUuid))
+        } finally {
+            val uri = android.content.ContentUris.withAppendedId(android.provider.CalendarContract.Calendars.CONTENT_URI, calendarId)
+                .buildUpon().appendQueryParameter(android.provider.CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+                .appendQueryParameter(android.provider.CalendarContract.Calendars.ACCOUNT_NAME, "${context.packageName}.course-calendar")
+                .appendQueryParameter(android.provider.CalendarContract.Calendars.ACCOUNT_TYPE, android.provider.CalendarContract.ACCOUNT_TYPE_LOCAL).build()
+            context.contentResolver.delete(uri, null, null)
+        }
+    }
+
+    @Test
     fun createSemesterIsAtomicAndCrossProfileActivationIsRejected() = runBlocking {
         val first = insertProfile("A", 0)
         val second = insertProfile("B", 1)

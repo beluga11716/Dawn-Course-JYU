@@ -127,6 +127,12 @@ abstract class RepositoryModule {
 
     @Binds
     @Singleton
+    abstract fun bindSystemCalendarSyncRepository(
+        impl: com.dawncourse.core.data.repository.SystemCalendarSyncRepositoryImpl,
+    ): com.dawncourse.core.domain.repository.SystemCalendarSyncRepository
+
+    @Binds
+    @Singleton
     abstract fun bindZhengFangSyncRepository(
         impl: com.dawncourse.core.data.repository.ZhengFangSyncRepositoryImpl,
     ): com.dawncourse.core.domain.repository.ZhengFangSyncRepository
