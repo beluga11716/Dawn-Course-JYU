@@ -11,3 +11,5 @@
 旧壁纸配色只替换 primary/secondary/tertiary，导致深绿主色和默认紫色的前景、容器混用，深色按钮对比度仅约 1.70。现在壁纸与手动颜色共用完整 Material 色阶生成器（MaterialKolor color utilities 3.0.1），同时生成所有背景、容器、前景与固定色角色。
 
 自动回归覆盖深绿壁纸的深色按钮及容器，以及 19 个预设在深浅两种模式下的九组前景/背景对比度（至少 4.5）。实际设备配色仍取决于壁纸与 ROM，真机需覆盖安装后确认。
+
+![设置分类、主题色板与深色壁纸取色](docs/readme-preview/theme-settings.png)
