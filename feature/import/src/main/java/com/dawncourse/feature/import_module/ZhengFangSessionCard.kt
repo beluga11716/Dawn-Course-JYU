@@ -12,11 +12,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -84,16 +87,37 @@ internal fun ZhengFangSessionCard(
             Text("嘉应学院后台同步", style = MaterialTheme.typography.titleMedium)
             Text(if (semester.isBlank()) "无需先建学期：网页登录后自动识别学期并导入课表"
                 else "当前学期：$semester", style = MaterialTheme.typography.bodySmall)
-            Text("账号密码只在网页填写。WebVPN 和教务系统使用同一学号、各自的密码。", style = MaterialTheme.typography.bodySmall)
-            Button(onClick = { automaticImport = true; showLogin = true }, enabled = initialized && canLogin && !busy,
-                modifier = Modifier.fillMaxWidth()) { Text("网页登录并自动导入") }
-            Text("登录后自动打开个人课表；读取不到开学日期时，在日历中选择一次即可。", style = MaterialTheme.typography.bodySmall)
             if (hasSession) {
-                Text(if (loginAccount.isBlank()) "已保存教务登录会话" else "已识别学号：$loginAccount", style = MaterialTheme.typography.bodySmall)
+                val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = if (darkTheme) Color(0xFF153C28) else Color(0xFFE5F5E9),
+                    contentColor = if (darkTheme) Color(0xFFA0E5B4) else Color(0xFF1B6335),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(28.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("已保存教务登录会话", style = MaterialTheme.typography.bodySmall)
+                            if (loginAccount.isNotBlank()) {
+                                Text("已识别学号：$loginAccount", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
                 Row {
                     TextButton(onClick = { automaticImport = false; showLogin = true }, enabled = !busy) { Text("更换网页账号") }
                     TextButton(onClick = { confirmUnbind = true }, enabled = !busy) { Text("移除保存的会话") }
                 }
+            } else {
+                Text("账号密码只在网页填写。WebVPN 和教务系统使用同一学号、各自的密码。", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { automaticImport = true; showLogin = true }, enabled = initialized && canLogin && !busy,
+                    modifier = Modifier.fillMaxWidth()) { Text("网页登录并自动导入") }
+                Text("登录后自动打开个人课表；读取不到开学日期时，在日历中选择一次即可。", style = MaterialTheme.typography.bodySmall)
             }
             remoteTerm?.let { (year, term) ->
                 if (ZhengFangWebVpn.validTerm(year, term)) Text("教务学期：${ZhengFangAcademicTerm(year, term).name}", style = MaterialTheme.typography.bodySmall)
