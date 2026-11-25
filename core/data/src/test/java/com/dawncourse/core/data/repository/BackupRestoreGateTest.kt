@@ -20,6 +20,33 @@ class BackupRestoreGateTest {
     private val gson = Gson()
 
     @Test
+    fun invalidThemeColorFailsBeforeCommit() = runBlocking {
+        for (value in listOf("null", "\"unknown-color\"")) {
+            val settings = gson.fromJson("{\"themeColor\":$value}", AppSettings::class.java)
+            var committed = false
+            val result = BackupRestoreGate.validateThenCommit(validPayload(settings = settings)) {
+                committed = true
+            }
+            assertTrue(result.isFailure)
+            assertFalse(committed)
+        }
+    }
+
+    @Test
+    fun oldBackupWithoutThemeColorUsesGreenAndValidColorRoundTrips() = runBlocking {
+        for (json in listOf("{}", "{\"themeColor\":\"BLUE\",\"dynamicColor\":true}")) {
+            val settings = gson.fromJson(json, AppSettings::class.java)
+            val result = BackupRestoreGate.validateThenCommit(validPayload(settings = settings)) {}
+            assertTrue(result.isSuccess)
+            val restored = gson.fromJson(gson.toJson(result.getOrThrow().settings), AppSettings::class.java)
+            assertEquals(settings.themeColor, restored.themeColor)
+            assertEquals(settings.dynamicColor, restored.dynamicColor)
+        }
+        assertEquals(com.dawncourse.core.domain.model.ThemeColor.DEFAULT_GREEN,
+            gson.fromJson("{}", AppSettings::class.java).themeColor)
+    }
+
+    @Test
     fun jsonNullSettingsFailsBeforeCommit() = runBlocking {
         val backup = gson.fromJson(
             """

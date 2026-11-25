@@ -210,6 +210,7 @@ internal object BackupPayloadValidator {
         settings.dividerType.name
         settings.wallpaperMode.name
         settings.themeMode.name
+        settings.themeColor.name
         settings.webDavAutoSyncMode.name
         settings.webDavAutoSyncIntervalUnit.name
         settings.dividerColor.length
