@@ -28,8 +28,8 @@ android {
         applicationId = "com.dawncourse.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 144
-        versionName = "1.0.5.7-jyu"
+        versionCode = 145
+        versionName = "1.0.5.8-jyu"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

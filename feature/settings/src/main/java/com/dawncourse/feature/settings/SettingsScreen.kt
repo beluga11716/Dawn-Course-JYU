@@ -110,6 +110,7 @@ fun SettingsScreen(
     onOpenZhengFangSync: () -> Unit,
     onOpenSystemCalendarSync: () -> Unit,
     onOpenOtherPlatformSync: () -> Unit,
+    onOpenWidgetSettings: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -303,6 +304,14 @@ fun SettingsScreen(
                         }
                     }
                 }
+            )
+
+            SettingRow(
+                icon = { Icon(Icons.Default.Widgets, contentDescription = null) },
+                title = "桌面小组件",
+                description = "添加到桌面、背景透明度与文字颜色",
+                showArrow = true,
+                onClick = onOpenWidgetSettings,
             )
 
             TimetableSection(

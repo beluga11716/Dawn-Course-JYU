@@ -2,6 +2,11 @@ package com.dawncourse.feature.widget
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -54,6 +59,10 @@ import java.time.ZoneId
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.repository.OperationalDataGate
 import com.dawncourse.core.domain.repository.OperationalDataReadiness
+import com.dawncourse.core.domain.model.WidgetAppearance
+import com.dawncourse.core.domain.repository.WidgetAppearanceRepository
+import com.dawncourse.core.ui.widget.WidgetColorScheme
+import kotlinx.coroutines.flow.first
 import java.time.format.DateTimeFormatter
 
 // 莫兰迪/马卡龙色系 (Day) / 深色适配 (Night)
@@ -67,34 +76,30 @@ private val WidgetCourseColors = listOf(
 )
 
 // Widget Semantic Colors (Day/Night)
-private object WidgetColors {
-    val Background = ColorProvider(day = Color.White, night = Color(0xFF1C1B1F))
-    val Surface = ColorProvider(day = Color.White, night = Color(0xFF1C1B1F))
-    val SurfaceVariant = ColorProvider(day = Color(0xFFF3F3F3), night = Color(0xFF2B2930)) // Slightly lighter than background for cards
-    
-    val Primary = ColorProvider(day = Color(0xFF6750A4), night = Color(0xFFD0BCFF))
-    val OnPrimary = ColorProvider(day = Color.White, night = Color(0xFF381E72))
-    
-    val PrimaryContainer = ColorProvider(day = Color(0xFFEADDFF), night = Color(0xFF4F378B))
-    val OnPrimaryContainer = ColorProvider(day = Color(0xFF21005D), night = Color(0xFFEADDFF))
-
-    val TextPrimary = ColorProvider(day = Color(0xFF1C1B1F), night = Color(0xFFE6E1E5))
-    val TextSecondary = ColorProvider(day = Color(0xFF49454F), night = Color(0xFFCAC4D0))
-    val TextTertiary = ColorProvider(day = Color(0xFF79747E), night = Color(0xFF938F99))
-    
-    val Divider = ColorProvider(day = Color(0xFFE0E0E0), night = Color(0xFF49454F))
-    val DateBadgeBackground = ColorProvider(day = Color(0xFFF1F3F4), night = Color(0xFF3C4043))
-    val ActiveBackground = ColorProvider(day = Color(0xFFFFF0F0), night = Color(0xFF3A2828))
-    val ActiveTextPrimary = ColorProvider(day = Color(0xFF1A1A1A), night = Color.White)
-    val ActiveTextSecondary = ColorProvider(day = Color(0xFF5F6368), night = Color(0xFFAAAAAA))
-    val UpcomingText = ColorProvider(day = Color(0xFF3C4043), night = Color(0xFFE8EAED))
-    val UpcomingSubText = ColorProvider(day = Color(0xFF5F6368), night = Color(0xFFAAAAAA))
-    val EdgeFadeStrong = ColorProvider(day = Color(0xE6FFFFFF), night = Color(0xE61C1B1F))
-    val EdgeFadeMedium = ColorProvider(day = Color(0xB3FFFFFF), night = Color(0xB31C1B1F))
-    val EdgeFadeLight = ColorProvider(day = Color(0x66FFFFFF), night = Color(0x661C1B1F))
-    
-    val IconTint = TextSecondary // Icons follow secondary text color usually
+private class WidgetPalette(appearance: WidgetAppearance) {
+    private val day = WidgetColorScheme(appearance, systemDark = false)
+    private val night = WidgetColorScheme(appearance, systemDark = true)
+    private fun color(select: (WidgetColorScheme) -> Color) = ColorProvider(select(day), select(night))
+    val Background = color { it.background }
+    val Primary = color { it.primary }
+    val TextPrimary = color { it.text }
+    val TextSecondary = color { it.secondaryText }
+    val Divider = color { it.divider }
+    val DateBadgeBackground = color { it.dateBackground }
+    val ActiveBackground = color { it.courseBackground }
+    val ActiveTextPrimary = TextPrimary
+    val ActiveTextSecondary = TextSecondary
+    val UpcomingText = TextPrimary
+    val UpcomingSubText = TextSecondary
+    val EdgeFadeStrong = color { it.background.copy(alpha = .9f) }
+    val EdgeFadeMedium = color { it.background.copy(alpha = .7f) }
+    val EdgeFadeLight = color { it.background.copy(alpha = .4f) }
+    val showEdgeFade = day.showEdgeFade
 }
+
+private val LocalWidgetPalette = staticCompositionLocalOf { WidgetPalette(WidgetAppearance()) }
+private val WidgetColors: WidgetPalette
+    @Composable get() = LocalWidgetPalette.current
 
 /**
  * 桌面小组件 (Widget) 主入口
@@ -124,10 +129,15 @@ class DawnWidget : GlanceAppWidget() {
             appContext,
             WidgetEntryPoint::class.java
         )
+        val appearanceFlow = entryPoint.widgetAppearanceRepository().appearance
+        val initialAppearance = appearanceFlow.first()
         val readiness = entryPoint.operationalDataGate().readiness()
         if (readiness != OperationalDataReadiness.READY) {
             provideContent {
+                val appearance by appearanceFlow.collectAsState(initialAppearance)
+                val palette = remember(appearance) { WidgetPalette(appearance) }
                 GlanceTheme {
+                    CompositionLocalProvider(LocalWidgetPalette provides palette) {
                     TimetableWidgetContent(
                         courses = emptyList(),
                         today = LocalDate.now(),
@@ -140,6 +150,7 @@ class DawnWidget : GlanceAppWidget() {
                         },
                         isBeforeSemesterStart = false
                     )
+                    }
                 }
             }
             return
@@ -150,7 +161,10 @@ class DawnWidget : GlanceAppWidget() {
         }
 
         provideContent {
+            val appearance by appearanceFlow.collectAsState(initialAppearance)
+            val palette = remember(appearance) { WidgetPalette(appearance) }
             GlanceTheme {
+                CompositionLocalProvider(LocalWidgetPalette provides palette) {
                 TimetableWidgetContent(
                     courses = timeline.displayCourses,
                     today = timeline.today,
@@ -159,6 +173,7 @@ class DawnWidget : GlanceAppWidget() {
                     emptyMessage = timeline.emptyMessage,
                     isBeforeSemesterStart = timeline.isBeforeSemesterStart
                 )
+                }
             }
         }
     }
@@ -172,6 +187,7 @@ class DawnWidget : GlanceAppWidget() {
         /** 在解析数据库依赖前读取无阻塞启动状态。 */
         fun operationalDataGate(): OperationalDataGate
         fun widgetTimelineBuilder(): WidgetTimelineBuilder
+        fun widgetAppearanceRepository(): WidgetAppearanceRepository
     }
 
     @Composable
@@ -414,7 +430,7 @@ class DawnWidget : GlanceAppWidget() {
                 }
             }
 
-            Column(
+            if (WidgetColors.showEdgeFade) Column(
                 modifier = GlanceModifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {

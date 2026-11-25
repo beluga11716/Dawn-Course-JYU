@@ -360,7 +360,17 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onOpenOtherPlatformSync = {
                                         navController.navigate("qidi_sync")
+                                    },
+                                    onOpenWidgetSettings = {
+                                        navController.navigate("widget_settings")
                                     }
+                                )
+                            }
+
+                            composable("widget_settings") {
+                                com.dawncourse.feature.settings.WidgetSettingsScreen(
+                                    onBackClick = { navController.popBackStack() },
+                                    onRequestPinWidget = { requestCourseWidgetPin(this@MainActivity) },
                                 )
                             }
 
