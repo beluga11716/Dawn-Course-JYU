@@ -326,12 +326,6 @@ class MainActivity : ComponentActivity() {
                                     onCourseClick = { courseId ->
                                         // 传递 courseId 进行编辑，若为 0 或 null 则为新建
                                         navController.navigate("course_editor?courseId=$courseId")
-                                    },
-                                    onNavigateToQidiSync = {
-                                        navController.navigate("qidi_sync")
-                                    },
-                                    onNavigateToZfSync = {
-                                        navController.navigate("zf_sync")
                                     }
                                 )
                             }
@@ -360,7 +354,19 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onOpenZhengFangSync = {
                                         navController.navigate("zf_sync")
+                                    },
+                                    onOpenSystemCalendarSync = {
+                                        navController.navigate("system_calendar_sync")
+                                    },
+                                    onOpenOtherPlatformSync = {
+                                        navController.navigate("qidi_sync")
                                     }
+                                )
+                            }
+
+                            composable("system_calendar_sync") {
+                                com.dawncourse.feature.settings.SystemCalendarSyncScreen(
+                                    onBackClick = { navController.popBackStack() },
                                 )
                             }
 

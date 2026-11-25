@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
 import java.time.Instant
@@ -324,15 +325,24 @@ class TimetableViewModel @Inject constructor(
      *
      * 调用用例执行同步流程，并通过用户消息反馈结果。
      */
+    private val _syncing = MutableStateFlow(false)
+    val syncing = _syncing.asStateFlow()
+
     fun syncNow() {
+        if (_syncing.value) return
+        _syncing.value = true
         viewModelScope.launch {
-            when (val result = runTimetableSyncUseCase()) {
-                is TimetableSyncResult.Success -> {
-                    _userMessage.value = "更新成功：${result.message}"
+            try {
+                when (val result = runTimetableSyncUseCase()) {
+                    is TimetableSyncResult.Success -> _userMessage.value = "更新成功：${result.message}"
+                    is TimetableSyncResult.Failure -> _userMessage.value = "更新失败：${result.message}。可前往设置 → 嘉应学院登录与同步检查"
                 }
-                is TimetableSyncResult.Failure -> {
-                    _userMessage.value = "更新失败：${result.message}"
-                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _userMessage.value = "更新未完成，请稍后重试；可在设置 → 嘉应学院登录与同步检查登录状态"
+            } finally {
+                _syncing.value = false
             }
         }
     }

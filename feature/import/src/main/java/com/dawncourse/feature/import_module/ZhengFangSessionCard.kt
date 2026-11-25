@@ -50,8 +50,6 @@ fun ZhengFangSyncScreen(onBackClick: () -> Unit, openLoginOnEntry: Boolean = fal
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)) {
             ZhengFangSessionCard(openLoginOnEntry = openLoginOnEntry)
-            Spacer(Modifier.height(16.dp))
-            SystemCalendarSyncCard()
         }
     }
 }

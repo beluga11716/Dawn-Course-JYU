@@ -1,4 +1,4 @@
-package com.dawncourse.feature.import_module
+package com.dawncourse.feature.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope

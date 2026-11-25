@@ -22,8 +22,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.ui.components.BatchGenerateTimeDialog
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
+import com.dawncourse.core.ui.components.SectionTimeEditDialog
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 
@@ -161,7 +160,7 @@ fun TimetableSettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "点击修改每节课的起止时间",
+                        text = "修改一节，后续节次自动平移",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -358,15 +357,12 @@ fun TimetableSettingsScreen(
             // 理论上在 safeSectionIndex 已裁剪后不会发生，但仍保留兜底，避免异常状态导致崩溃。
             showTimePickerDialog = null
         } else {
-            TimeRangeEditDialog(
-                title = "编辑第 $safeSectionIndex 节时间",
-                initialStartTime = currentTime.startTime,
-                initialEndTime = currentTime.endTime,
+            SectionTimeEditDialog(
+                times = currentList,
+                index = safeSectionIndex - 1,
                 onDismissRequest = { showTimePickerDialog = null },
-                onConfirm = { start, end ->
-                    // 更新节次时间列表：仅替换当前节次，其余保持不变。
-                    val newList = currentList.toMutableList()
-                    newList[safeSectionIndex - 1] = SectionTime(start, end)
+                onConfirm = { newList ->
+                    // 与快捷设置共用平移规则，确认后一次保存全部节次。
                     viewModel.setSectionTimes(newList)
                     showTimePickerDialog = null
                 }
@@ -377,7 +373,7 @@ fun TimetableSettingsScreen(
     if (showBatchGenerateDialog) {
         BatchGenerateTimeDialog(
             maxDailySections = settings.maxDailySections,
-            initialDuration = settings.defaultCourseDuration,
+            initialSectionTimes = settings.sectionTimes,
             onDismissRequest = { showBatchGenerateDialog = false },
             onConfirm = { newTimes ->
                 viewModel.setSectionTimes(newTimes)

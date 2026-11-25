@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.rounded.BeachAccess
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -107,7 +108,8 @@ fun TimetableTopBar(
     onSettingsClick: () -> Unit,
     onAddClick: () -> Unit,
     onImportClick: () -> Unit,
-    onSyncClick: () -> Unit
+    onSyncClick: () -> Unit,
+    syncing: Boolean = false,
 ) {
     var showWeekMenu by remember { mutableStateOf(false) }
     val weekMenuScrollState = rememberScrollState()
@@ -307,8 +309,12 @@ fun TimetableTopBar(
             }
         },
         actions = {
-            IconButton(onClick = onSyncClick) {
-                Icon(Icons.Default.Refresh, contentDescription = "自动更新")
+            IconButton(onClick = onSyncClick, enabled = !syncing) {
+                if (syncing) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = "立即同步")
+                }
             }
             IconButton(onClick = onImportClick) {
                 Icon(Icons.Default.CloudDownload, contentDescription = "导入课程")

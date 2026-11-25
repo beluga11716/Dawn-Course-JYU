@@ -1,4 +1,4 @@
-package com.dawncourse.feature.import_module
+package com.dawncourse.feature.settings
 
 import android.Manifest
 import android.content.ActivityNotFoundException
@@ -15,6 +15,16 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -42,6 +52,22 @@ import com.dawncourse.core.domain.model.CALENDAR_REMINDER_OPTIONS
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SystemCalendarSyncScreen(onBackClick: () -> Unit) {
+    Scaffold(topBar = {
+        TopAppBar(title = { Text("系统日历同步") }, navigationIcon = {
+            IconButton(onClick = onBackClick) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
+        })
+    }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            SystemCalendarSyncCard()
+        }
+    }
+}
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)

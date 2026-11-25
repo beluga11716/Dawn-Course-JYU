@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -15,14 +14,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.ui.components.BatchGenerateTimeContent
+import com.dawncourse.core.ui.components.SectionTimeEditDialog
 
 /**
  * 节次设置子页面类型
@@ -79,6 +77,7 @@ fun SectionTimeSettingsDialog(
                     SectionSettingsScreen.BatchGenerate -> {
                         BatchGenerateTimeContent(
                             maxDailySections = settings.maxDailySections,
+                            initialSectionTimes = settings.sectionTimes,
                             onDismissRequest = { currentScreen = SectionSettingsScreen.List },
                             onConfirm = { newTimes ->
                                 viewModel.setSectionTimes(newTimes)
@@ -112,14 +111,11 @@ fun SectionTimeSettingsDialog(
         if (currentTime == null) {
             showTimePickerDialog = null
         } else {
-            TimeRangeEditDialog(
-                title = "编辑第 $safeSectionIndex 节时间",
-                initialStartTime = currentTime.startTime,
-                initialEndTime = currentTime.endTime,
+            SectionTimeEditDialog(
+                times = currentList,
+                index = safeSectionIndex - 1,
                 onDismissRequest = { showTimePickerDialog = null },
-                onConfirm = { start, end ->
-                    val newList = currentList.toMutableList()
-                    newList[safeSectionIndex - 1] = SectionTime(start, end)
+                onConfirm = { newList ->
                     viewModel.setSectionTimes(newList)
                     showTimePickerDialog = null
                 }
@@ -168,6 +164,10 @@ private fun SectionTimeListContent(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        Text("修改某一节后，后续所有节次自动平移，课间间隔保持不变。",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(8.dp))
 
         val sectionTimes = remember(settings.sectionTimes, settings.maxDailySections) {
             (1..settings.maxDailySections).map { index ->
@@ -234,109 +234,5 @@ private fun SectionTimeListContent(
                 }
             }
         }
-    }
-}
-
-/**
- * 时间段编辑弹窗
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun TimeRangeEditDialog(
-    title: String,
-    initialStartTime: String,
-    initialEndTime: String,
-    onDismissRequest: () -> Unit,
-    onConfirm: (String, String) -> Unit
-) {
-    // 解析 "HH:mm"
-    fun parse(t: String): Pair<Int, Int> {
-        val p = t.split(":").map { it.toIntOrNull() ?: 0 }
-        return (p.getOrNull(0) ?: 0) to (p.getOrNull(1) ?: 0)
-    }
-
-    val startState = rememberTimePickerState(
-        initialHour = parse(initialStartTime).first,
-        initialMinute = parse(initialStartTime).second,
-        is24Hour = true
-    )
-    val endState = rememberTimePickerState(
-        initialHour = parse(initialEndTime).first,
-        initialMinute = parse(initialEndTime).second,
-        is24Hour = true
-    )
-    
-    var selectedTab by remember { mutableIntStateOf(0) }
-
-    AlertDialog(
-        onDismissRequest = onDismissRequest,
-        title = { Text(title) },
-        text = {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    TabButton(
-                        text = "开始: ${String.format("%02d:%02d", startState.hour, startState.minute)}",
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 }
-                    )
-                    TabButton(
-                        text = "结束: ${String.format("%02d:%02d", endState.hour, endState.minute)}",
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 }
-                    )
-                }
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                if (selectedTab == 0) {
-                    TimePicker(state = startState)
-                } else {
-                    TimePicker(state = endState)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val start = String.format("%02d:%02d", startState.hour, startState.minute)
-                    val end = String.format("%02d:%02d", endState.hour, endState.minute)
-                    onConfirm(start, end)
-                }
-            ) {
-                Text("确定")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text("取消")
-            }
-        }
-    )
-}
-
-/**
- * 时间段选择 Tab 按钮
- */
-@Composable
-fun TabButton(text: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-    ) {
-        Text(
-            text = text,
-            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Bold
-        )
     }
 }

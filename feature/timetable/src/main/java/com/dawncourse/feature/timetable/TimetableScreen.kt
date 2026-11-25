@@ -32,7 +32,6 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
-import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -62,29 +61,19 @@ fun TimetableRoute(
     onAddClick: () -> Unit,
     onImportClick: () -> Unit,
     onCourseClick: (Long) -> Unit,
-    onNavigateToQidiSync: () -> Unit,
-    onNavigateToZfSync: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val userMessage by viewModel.userMessage.collectAsState()
-    val boundProvider by viewModel.boundProvider.collectAsState()
+    val syncing by viewModel.syncing.collectAsState()
     
     TimetableScreen(
         uiState = uiState,
         userMessage = userMessage,
+        syncing = syncing,
         onUserMessageShown = { viewModel.userMessageShown() },
         onAddClick = onAddClick,
         onImportClick = onImportClick,
-        onSyncClick = {
-            when (boundProvider) {
-                SyncProviderType.QIDI -> onNavigateToQidiSync()
-                SyncProviderType.ZF -> onNavigateToZfSync()
-                SyncProviderType.WAKEUP -> viewModel.showUserMessage("WakeUp 口令自动更新已下线，请绑定正方教务账号")
-                // WebDAV 仅在设置页配置与操作
-                SyncProviderType.WEBDAV -> viewModel.showUserMessage("WebDAV 同步请在设置页进行")
-                null -> onNavigateToZfSync()
-            }
-        },
+        onSyncClick = viewModel::syncNow,
         onSettingsClick = onSettingsClick,
         onCourseClick = onCourseClick,
         onUndoReschedule = { viewModel.undoReschedule(it) },
@@ -123,6 +112,7 @@ fun TimetableRoute(
 internal fun TimetableScreen(
     uiState: TimetableUiState,
     userMessage: String? = null,
+    syncing: Boolean = false,
     onUserMessageShown: () -> Unit = {},
     onAddClick: () -> Unit,
     onImportClick: () -> Unit,
@@ -271,7 +261,8 @@ internal fun TimetableScreen(
                     onSettingsClick = onSettingsClick,
                     onAddClick = onAddClick,
                     onImportClick = onImportClick,
-                    onSyncClick = onSyncClick
+                    onSyncClick = onSyncClick,
+                    syncing = syncing,
                 )
             },
             contentColor = MaterialTheme.colorScheme.onBackground

@@ -39,7 +39,7 @@ class TimetableSyncRepositoryImpl @Inject constructor(
         val creds = credentialsRepository.getCredentials(capturedContext.profile.id)
             ?: return TimetableSyncResult.Failure(
                 code = SyncErrorCode.NO_CREDENTIALS,
-                message = "未绑定账号或口令"
+                message = "未保存登录会话，请前往设置 → 嘉应学院登录与同步完成网页登录"
             )
         val capturedBindingId = profileSelectionCoordinator.ensureSourceBindingIfStillActive(
             profileId = capturedContext.profile.id,
@@ -67,7 +67,7 @@ class TimetableSyncRepositoryImpl @Inject constructor(
             SyncProviderType.QIDI -> {
                 TimetableSyncResult.Failure(
                     code = SyncErrorCode.AUTH_FAILED,
-                    message = "当前绑定为教务账号，请在主界面使用“自动更新”进入同步页面"
+                    message = "当前绑定为起迪账号，请前往设置中的其他平台账号使用原同步流程"
                 )
             }
             SyncProviderType.WEBDAV -> {

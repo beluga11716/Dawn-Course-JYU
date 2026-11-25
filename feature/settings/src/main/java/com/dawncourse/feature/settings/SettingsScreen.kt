@@ -108,6 +108,8 @@ fun SettingsScreen(
     onCheckUpdate: () -> Unit,
     onOpenProfileManager: () -> Unit,
     onOpenZhengFangSync: () -> Unit,
+    onOpenSystemCalendarSync: () -> Unit,
+    onOpenOtherPlatformSync: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -272,6 +274,37 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
+            DataSyncSection(
+                boundProvider = boundProvider,
+                lastSyncDesc = lastSyncDesc,
+                onOpenZhengFangSync = onOpenZhengFangSync,
+                onOpenSystemCalendarSync = onOpenSystemCalendarSync,
+                onOpenOtherPlatformSync = onOpenOtherPlatformSync,
+                onShowDialog = { dialogState = it },
+                onOpenWebDav = {
+                    showWebDavSheet = true
+                    viewModel.refreshWebDavRemoteInfo()
+                },
+                onOpenLocalBackup = {
+                    showLocalBackupSheet = true
+                    // 每次打开重置提示与进度，避免旧状态残留
+                    viewModel.resetLocalBackupState()
+                },
+                onExportCalendar = {
+                    val semester = currentSemester
+                    if (semester == null) {
+                        Toast.makeText(context, "当前未选择学期，无法导出日历", Toast.LENGTH_SHORT).show()
+                    } else {
+                        try {
+                            val fileName = "DawnCourse_${semester.name}.ics"
+                            calendarExportLauncher.launch(fileName)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            )
+
             TimetableSection(
                 settings = settings,
                 currentSemester = currentSemester,
@@ -303,34 +336,6 @@ fun SettingsScreen(
                     checkAndRequestNotificationPermission(onGranted)
                 },
                 onRequestAutoMutePermission = { dialogState = SettingsDialogState.Permission }
-            )
-            DataSyncSection(
-                boundProvider = boundProvider,
-                lastSyncDesc = lastSyncDesc,
-                onOpenZhengFangSync = onOpenZhengFangSync,
-                onShowDialog = { dialogState = it },
-                onOpenWebDav = {
-                    showWebDavSheet = true
-                    viewModel.refreshWebDavRemoteInfo()
-                },
-                onOpenLocalBackup = {
-                    showLocalBackupSheet = true
-                    // 每次打开重置提示与进度，避免旧状态残留
-                    viewModel.resetLocalBackupState()
-                },
-                onExportCalendar = {
-                    val semester = currentSemester
-                    if (semester == null) {
-                        Toast.makeText(context, "当前未选择学期，无法导出日历", Toast.LENGTH_SHORT).show()
-                    } else {
-                        try {
-                            val fileName = "DawnCourse_${semester.name}.ics"
-                            calendarExportLauncher.launch(fileName)
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
             )
 
             AboutSection(
@@ -1044,6 +1049,8 @@ private fun DataSyncSection(
     boundProvider: SyncProviderType?,
     lastSyncDesc: String,
     onOpenZhengFangSync: () -> Unit,
+    onOpenSystemCalendarSync: () -> Unit,
+    onOpenOtherPlatformSync: () -> Unit,
     onShowDialog: (SettingsDialogState) -> Unit,
     onOpenWebDav: () -> Unit,
     onOpenLocalBackup: () -> Unit,
@@ -1061,6 +1068,7 @@ private fun DataSyncSection(
             title = "其他平台账号",
             description = "已绑定 ${boundProvider.name}",
             icon = { Icon(Icons.Default.AccountCircle, null) },
+            onClick = if (boundProvider == SyncProviderType.QIDI) onOpenOtherPlatformSync else null,
             action = {
                 TextButton(onClick = { onShowDialog(SettingsDialogState.UnbindConfirm(boundProvider)) }) {
                     Text("解绑")
@@ -1079,6 +1087,13 @@ private fun DataSyncSection(
             title = "备份与还原",
             icon = { Icon(Icons.Default.Restore, null) },
             onClick = onOpenLocalBackup,
+            showDivider = true
+        )
+        SettingRow(
+            title = "系统日历同步",
+            description = "将课程同步到手机日历，并设置课前提醒",
+            icon = { Icon(Icons.Default.EventAvailable, null) },
+            onClick = onOpenSystemCalendarSync,
             showDivider = true
         )
         SettingRow(

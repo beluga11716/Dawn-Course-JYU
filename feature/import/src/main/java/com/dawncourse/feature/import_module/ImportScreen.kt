@@ -1244,6 +1244,7 @@ private fun ReviewStep(
             initialPmStart = uiState.pmStartTime,
             initialEveStartSec = uiState.eveStartSection,
             initialEveStart = uiState.eveStartTime,
+            initialSectionTimes = uiState.sectionTimes,
             onDismissRequest = { showTimeSettingDialog = false },
             onConfirm = { times ->
                 viewModel.updateSectionTimes(times)

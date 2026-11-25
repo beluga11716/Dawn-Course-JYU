@@ -3,6 +3,8 @@ package com.dawncourse.core.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -22,7 +24,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.dawncourse.core.domain.model.SectionTime
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import java.time.LocalTime
+import java.time.Duration
 import java.time.format.DateTimeFormatter
 
 /**
@@ -46,6 +50,7 @@ fun BatchGenerateTimeDialog(
     initialPmStart: LocalTime = LocalTime.of(14, 0),
     initialEveStartSec: Int = 9,
     initialEveStart: LocalTime = LocalTime.of(19, 0),
+    initialSectionTimes: List<SectionTime> = emptyList(),
     onDismissRequest: () -> Unit,
     onConfirm: (List<SectionTime>) -> Unit
 ) {
@@ -64,6 +69,7 @@ fun BatchGenerateTimeDialog(
                 initialPmStart = initialPmStart,
                 initialEveStartSec = initialEveStartSec,
                 initialEveStart = initialEveStart,
+                initialSectionTimes = initialSectionTimes,
                 onDismissRequest = onDismissRequest,
                 onConfirm = onConfirm
             )
@@ -82,159 +88,187 @@ fun BatchGenerateTimeContent(
     initialPmStart: LocalTime = LocalTime.of(14, 0),
     initialEveStartSec: Int = 9,
     initialEveStart: LocalTime = LocalTime.of(19, 0),
+    initialSectionTimes: List<SectionTime> = emptyList(),
     onDismissRequest: () -> Unit,
-    onConfirm: (List<SectionTime>) -> Unit
+    onConfirm: (List<SectionTime>) -> Unit,
+    editor: SectionTimeEditorViewModel = hiltViewModel(),
 ) {
-    var sectionDuration by remember { mutableStateOf(initialDuration.toString()) }
-    var breakDuration by remember { mutableStateOf(initialBreakDuration.toString()) }
+    // 快捷参数从已保存时间推导，避免上方显示默认值、下方显示另一份时间表。
+    fun savedStart(index: Int, fallback: LocalTime): LocalTime =
+        runCatching { LocalTime.parse(initialSectionTimes[index].startTime) }.getOrDefault(fallback)
+    val savedDuration = runCatching {
+        initialSectionTimes.first().let { Duration.between(LocalTime.parse(it.startTime), LocalTime.parse(it.endTime)).toMinutes().toInt() }
+    }.getOrDefault(initialDuration).takeIf { it in 1..240 } ?: initialDuration
+    val savedBreak = runCatching {
+        Duration.between(LocalTime.parse(initialSectionTimes[0].endTime), LocalTime.parse(initialSectionTimes[1].startTime)).toMinutes().toInt()
+    }.getOrDefault(initialBreakDuration).takeIf { it in 0..180 } ?: initialBreakDuration
+    var sectionDuration by remember { mutableStateOf(savedDuration.toString()) }
+    var breakDuration by remember { mutableStateOf(savedBreak.toString()) }
     
-    var morningStartTime by remember { mutableStateOf(initialAmStart) }
+    var morningStartTime by remember { mutableStateOf(savedStart(0, initialAmStart)) }
     
     var afternoonStartSection by remember { mutableStateOf(initialPmStartSec.toString()) }
-    var afternoonStartTime by remember { mutableStateOf(initialPmStart) }
+    var afternoonStartTime by remember { mutableStateOf(savedStart(initialPmStartSec - 1, initialPmStart)) }
     
     var eveningStartSection by remember { mutableStateOf(initialEveStartSec.toString()) }
-    var eveningStartTime by remember { mutableStateOf(initialEveStart) }
+    var eveningStartTime by remember { mutableStateOf(savedStart(initialEveStartSec - 1, initialEveStart)) }
     
     var showTimePickerFor by remember { mutableStateOf<String?>(null) } // "morning", "afternoon", "evening"
+    var editedTimes by remember(maxDailySections, initialSectionTimes) {
+        mutableStateOf(initialSectionTimes.takeIf { it.isNotEmpty() })
+    }
+    var editingSection by remember { mutableStateOf<Int?>(null) }
+    val preview = remember(editedTimes, maxDailySections, sectionDuration, breakDuration, morningStartTime,
+        afternoonStartSection, afternoonStartTime, eveningStartSection, eveningStartTime) {
+        editor.preview(editedTimes, maxDailySections, sectionDuration, breakDuration, morningStartTime,
+            afternoonStartSection, afternoonStartTime, eveningStartSection, eveningStartTime)
+    }
 
     Column(
-        modifier = Modifier.padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp)
+        modifier = Modifier.heightIn(max = 650.dp).imePadding().padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-                // Header
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "快捷节次设置",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "快速生成全天课程时间表",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+        Column(
+            modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // Header
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "快捷节次设置",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "上方快捷生成，下方逐节调整；保存后生效",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // 1. 基础设置 (Card Style)
+                SettingsGroupCard(title = "基础设置", icon = Icons.Outlined.Timer) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CompactNumericInput(
+                            value = sectionDuration,
+                            onValueChange = { sectionDuration = it; editedTimes = null },
+                            label = "每节时长",
+                            suffix = "分",
+                            modifier = Modifier.weight(1f)
+                        )
+                        CompactNumericInput(
+                            value = breakDuration,
+                            onValueChange = { breakDuration = it; editedTimes = null },
+                            label = "课间休息",
+                            suffix = "分",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
 
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // 1. 基础设置 (Card Style)
-                    SettingsGroupCard(title = "基础设置", icon = Icons.Outlined.Timer) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            CompactNumericInput(
-                                value = sectionDuration,
-                                onValueChange = { sectionDuration = it },
-                                label = "每节时长",
-                                suffix = "分",
-                                modifier = Modifier.weight(1f)
-                            )
-                            CompactNumericInput(
-                                value = breakDuration,
-                                onValueChange = { breakDuration = it },
-                                label = "课间休息",
-                                suffix = "分",
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
+                // 2. 时间节点 (Card Style)
+                SettingsGroupCard(title = "时间节点", icon = Icons.Filled.AccessTime) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        // Morning
+                        TimeNodeRow(
+                            icon = Icons.Filled.WbSunny,
+                            label = "上午 (第1节)",
+                            time = morningStartTime,
+                            onClick = { showTimePickerFor = "morning" }
+                        )
 
-                    // 2. 时间节点 (Card Style)
-                    SettingsGroupCard(title = "时间节点", icon = Icons.Filled.AccessTime) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            // Morning
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        // Afternoon
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CompactNumericInput(
+                                value = afternoonStartSection,
+                                onValueChange = { afternoonStartSection = it; editedTimes = null },
+                                label = "下午起始",
+                                prefix = "第",
+                                suffix = "节",
+                                modifier = Modifier.width(80.dp)
+                            )
                             TimeNodeRow(
-                                icon = Icons.Filled.WbSunny,
-                                label = "上午 (第1节)",
-                                time = morningStartTime,
-                                onClick = { showTimePickerFor = "morning" }
+                                icon = Icons.Filled.WbTwilight,
+                                label = "开始",
+                                time = afternoonStartTime,
+                                onClick = { showTimePickerFor = "afternoon" },
+                                modifier = Modifier.weight(1f)
                             )
-                            
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        }
 
-                            // Afternoon
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                CompactNumericInput(
-                                    value = afternoonStartSection,
-                                    onValueChange = { afternoonStartSection = it },
-                                    label = "下午起始",
-                                    prefix = "第",
-                                    suffix = "节",
-                                    modifier = Modifier.width(80.dp)
-                                )
-                                TimeNodeRow(
-                                    icon = Icons.Filled.WbTwilight,
-                                    label = "开始",
-                                    time = afternoonStartTime,
-                                    onClick = { showTimePickerFor = "afternoon" },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                            // Evening
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                CompactNumericInput(
-                                    value = eveningStartSection,
-                                    onValueChange = { eveningStartSection = it },
-                                    label = "晚上起始",
-                                    prefix = "第",
-                                    suffix = "节",
-                                    modifier = Modifier.width(80.dp)
-                                )
-                                TimeNodeRow(
-                                    icon = Icons.Filled.Bedtime,
-                                    label = "开始",
-                                    time = eveningStartTime,
-                                    onClick = { showTimePickerFor = "evening" },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
+                        // Evening
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CompactNumericInput(
+                                value = eveningStartSection,
+                                onValueChange = { eveningStartSection = it; editedTimes = null },
+                                label = "晚上起始",
+                                prefix = "第",
+                                suffix = "节",
+                                modifier = Modifier.width(80.dp)
+                            )
+                            TimeNodeRow(
+                                icon = Icons.Filled.Bedtime,
+                                label = "开始",
+                                time = eveningStartTime,
+                                onClick = { showTimePickerFor = "evening" },
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
                 }
+            }
 
-                // Action Buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onDismissRequest) {
-                        Text("取消")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            val duration = sectionDuration.toIntOrNull() ?: 45
-                            val breakTime = breakDuration.toIntOrNull() ?: 10
-                            val pmStartSec = afternoonStartSection.toIntOrNull() ?: 5
-                            val eveStartSec = eveningStartSection.toIntOrNull() ?: 9
-                            
-                            val generated = generateTimes(
-                                maxSections = maxDailySections,
-                                duration = duration,
-                                breakTime = breakTime,
-                                amStart = morningStartTime,
-                                pmStartSec = pmStartSec,
-                                pmStart = afternoonStartTime,
-                                eveStartSec = eveStartSec,
-                                eveStart = eveningStartTime
-                            )
-                            onConfirm(generated)
-                        }
+            SettingsGroupCard(title = "节次时间设置", icon = Icons.Filled.AccessTime) {
+                Text("点击某一节修改，后续所有节次自动平移。修改上方快捷参数会重新生成整张时间表。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                preview.getOrNull()?.forEachIndexed { index, time ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { editingSection = index }.padding(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("生成时间表")
+                        Text("第 ${index + 1} 节", style = MaterialTheme.typography.bodyLarge)
+                        Text("${time.startTime} - ${time.endTime}", color = MaterialTheme.colorScheme.primary)
                     }
+                    if (index < maxDailySections - 1) HorizontalDivider()
                 }
+                preview.exceptionOrNull()?.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        }
+
+        // Action Buttons
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onDismissRequest) {
+                Text("取消")
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(
+                enabled = preview.isSuccess,
+                onClick = {
+                    preview.getOrNull()?.let(onConfirm)
+                }
+            ) {
+                Text("保存时间表")
+            }
+        }
     }
     
     // Time Picker Dialog
@@ -250,6 +284,7 @@ fun BatchGenerateTimeContent(
             initialTime = initialTime,
             onDismiss = { showTimePickerFor = null },
             onConfirm = { selectedTime ->
+                editedTimes = null
                 when(showTimePickerFor) {
                     "morning" -> morningStartTime = selectedTime
                     "afternoon" -> afternoonStartTime = selectedTime
@@ -259,8 +294,14 @@ fun BatchGenerateTimeContent(
             }
         )
     }
+    editingSection?.let { index ->
+        preview.getOrNull()?.let { times ->
+            SectionTimeEditDialog(times = times, index = index,
+                onDismissRequest = { editingSection = null },
+                onConfirm = { editedTimes = it; editingSection = null })
+        }
+    }
 }
-
 @Composable
 private fun SettingsGroupCard(
     title: String,
@@ -371,43 +412,4 @@ private fun TimeNodeRow(
             softWrap = false
         )
     }
-}
-
-private fun generateTimes(
-    maxSections: Int,
-    duration: Int,
-    breakTime: Int,
-    amStart: LocalTime,
-    pmStartSec: Int,
-    pmStart: LocalTime,
-    eveStartSec: Int,
-    eveStart: LocalTime
-): List<SectionTime> {
-    val result = mutableListOf<SectionTime>()
-    var currentTime = amStart
-    
-    val formatter = DateTimeFormatter.ofPattern("HH:mm")
-    
-    for (i in 1..maxSections) {
-        // Determine start time for this section
-        val startTime = when (i) {
-            1 -> amStart
-            pmStartSec -> pmStart
-            eveStartSec -> eveStart
-            else -> currentTime.plusMinutes(breakTime.toLong())
-        }
-        
-        val actualStart = if (i == 1 || i == pmStartSec || i == eveStartSec) {
-            startTime
-        } else {
-            currentTime.plusMinutes(breakTime.toLong())
-        }
-        
-        val endTime = actualStart.plusMinutes(duration.toLong())
-        
-        result.add(SectionTime(actualStart.format(formatter), endTime.format(formatter)))
-        
-        currentTime = endTime
-    }
-    return result
 }
